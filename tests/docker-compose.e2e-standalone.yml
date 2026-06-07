@@ -1,0 +1,65 @@
+# ============================================================
+#  E2E standalone stack — does NOT inherit from docker-compose.yml.
+#  Avoids port-merge issues when the main stack is already running
+#  on :4000 / :8080.
+#
+#  → web: http://localhost:8081   api: http://localhost:4001
+# ============================================================
+services:
+
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: kanban
+      POSTGRES_PASSWORD: kanban
+      POSTGRES_DB: kanban
+    volumes:
+      - kanban_e2e_pg:/var/lib/postgresql/data
+      - ../server/db/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U kanban"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  api:
+    build:
+      context: ../server
+      dockerfile: Dockerfile
+    environment:
+      PORT: 4000
+      DATABASE_URL: postgres://kanban:kanban@db:5432/kanban
+      JWT_SECRET: e2e-test-secret-kanban
+      WEB_ORIGIN: http://localhost:8081
+      PROVISION_TOKEN: dev-provision-token
+      AUTH_RATE_MAX: 100000          # lenient — Playwright logs in many times per IP
+    ports:
+      - "4001:4000"
+    depends_on:
+      db:
+        condition: service_healthy
+
+  web:
+    build:
+      context: ..
+      dockerfile: web.Dockerfile
+    ports:
+      - "8081:80"
+    depends_on:
+      - api
+
+  seed:
+    build:
+      context: ../server
+      dockerfile: Dockerfile
+    environment:
+      DATABASE_URL: postgres://kanban:kanban@db:5432/kanban
+    command: ["npm", "run", "seed"]
+    depends_on:
+      db:
+        condition: service_healthy
+    profiles:
+      - seed
+
+volumes:
+  kanban_e2e_pg:

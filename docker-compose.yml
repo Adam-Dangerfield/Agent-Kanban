@@ -1,0 +1,89 @@
+# ============================================================
+#  Kanban — full local stack (web + api + Postgres)
+#
+#  Normal workflow:
+#
+#    1. Start the stack (builds images, applies schema on first db init):
+#         docker compose up --build
+#
+#    2. Seed the database with sample data (run once after first `up`):
+#         docker compose --profile seed run --rm seed
+#       The seed script TRUNCATEs then re-inserts, so it is safe to re-run.
+#
+#    3. Mint a per-agent token (run after seeding):
+#         docker compose exec api npm run mint-token <agent-id>
+#       The raw token is shown once — store it in the agent's .env.
+#
+#  URLs: web http://localhost:8080   api http://localhost:4000/api/health
+# ============================================================
+services:
+
+  # ---- Postgres -----------------------------------------------
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: kanban
+      POSTGRES_PASSWORD: kanban
+      POSTGRES_DB: kanban
+    volumes:
+      - kanban_pg:/var/lib/postgresql/data
+      # Schema auto-applies on first container init (idempotent DDL).
+      - ./server/db/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U kanban"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # ---- API (Express + Postgres) --------------------------------
+  api:
+    build: ./server
+    environment:
+      PORT: 4000
+      DATABASE_URL: postgres://kanban:kanban@db:5432/kanban
+      JWT_SECRET: ${JWT_SECRET:-dev-secret-change-me}
+      WEB_ORIGIN: http://localhost:8080
+      # Root (full-scope) provisioning token for creating agents + minting tokens.
+      PROVISION_TOKEN: ${PROVISION_TOKEN:-dev-provision-token}
+      # Attachment storage: local disk by default. Set S3_BUCKET (+AWS_REGION) for S3.
+      UPLOAD_DIR: /data/uploads
+      S3_BUCKET: ${S3_BUCKET:-}
+      AWS_REGION: ${AWS_REGION:-}
+      # Dev/test: lenient auth rate limit so the suites (many logins per IP)
+      # don't hit 429. Prod overrides this to a strict value.
+      AUTH_RATE_MAX: ${AUTH_RATE_MAX:-100000}
+    ports:
+      - "4000:4000"
+    volumes:
+      - kanban_uploads:/data/uploads
+    depends_on:
+      db:
+        condition: service_healthy
+
+  # ---- Web (nginx static frontend) ----------------------------
+  web:
+    build:
+      context: .
+      dockerfile: web.Dockerfile
+    ports:
+      - "8080:80"
+    depends_on:
+      - api
+
+  # ---- One-shot seed (explicit, not run on every boot) --------
+  # Run with:  docker compose --profile seed run --rm seed
+  seed:
+    build: ./server
+    environment:
+      DATABASE_URL: postgres://kanban:kanban@db:5432/kanban
+    command: ["npm", "run", "seed"]
+    depends_on:
+      db:
+        condition: service_healthy
+    profiles:
+      - seed
+
+# ---- Persistent volumes -------------------------------------
+volumes:
+  kanban_pg:
+  kanban_uploads:      # local attachment storage (UPLOAD_DIR)

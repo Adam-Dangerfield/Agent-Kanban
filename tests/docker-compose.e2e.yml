@@ -1,0 +1,26 @@
+# ============================================================
+#  E2E isolation overlay.
+#  Runs a second, fully isolated copy of the stack on alternate
+#  host ports so UI tests never collide with the API suite (which
+#  uses the main stack on :4000 / :8080).
+#
+#  Use with an explicit project name so the volume/network are
+#  separate too:
+#
+#    docker compose -p kanban_e2e \
+#      -f docker-compose.yml -f tests/docker-compose.e2e.yml up --build -d
+#
+#  → web: http://localhost:8081   api: http://localhost:4001
+# ============================================================
+services:
+  api:
+    ports:
+      - "4001:4000"
+    environment:
+      WEB_ORIGIN: http://localhost:8081
+  web:
+    ports:
+      - "8081:80"
+  seed:
+    environment:
+      DATABASE_URL: postgres://kanban:kanban@db:5432/kanban

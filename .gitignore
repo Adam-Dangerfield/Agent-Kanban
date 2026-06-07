@@ -1,0 +1,30 @@
+# ---- secrets & local config ---------------------------------
+# .env is a DIRECTORY at this repo root (holds handover credentials).
+# Both the directory and any flat .env file are excluded.
+.env
+.env/
+secrets/
+**/secrets/
+
+# ---- dependencies -------------------------------------------
+node_modules/
+
+# ---- database dumps & logs ----------------------------------
+*.dump
+*.log
+
+# ---- snapshot archives (don't track binaries) ---------------
+*.zip
+
+# ---- test / playwright artefacts ----------------------------
+test-results/
+playwright-report/
+
+# ---- OS / editor noise --------------------------------------
+.DS_Store
+Thumbs.db
+
+# ---- public mirror output (local, not committed) ------------
+# The sanitised GitHub mirror is written to ../kanban-public by
+# scripts/prepare-public.sh; it lives outside the repo and is not tracked.
+# Nothing to ignore here — just a note.
