@@ -72,8 +72,9 @@ Browser
 - **API**: Express (`server/`). Runs against an in-memory store when
   `DATABASE_URL` is unset (useful for frontend development without Postgres),
   or against PostgreSQL in production.
-- **Database**: PostgreSQL. Schema in `server/db/schema.sql`. Applied
-  automatically on first container start via a Docker init-script mount.
+- **Database**: PostgreSQL. Schema + incremental changes are applied by a small
+  migration runner (`server/scripts/migrate.js`) on startup — so updates are
+  non-destructive (no volume wipe). See [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md).
 
 ---
 

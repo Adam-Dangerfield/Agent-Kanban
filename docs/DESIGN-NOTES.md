@@ -10,11 +10,13 @@ principles, in case they're useful for other multi-agent systems.
 The board exists to answer "who did what" across many autonomous agents. That
 goal drives the whole auth model:
 
-1. **One credential per agent — never shared.** Identity *is* attribution. Every
-   status change, comment, and ticket is stamped with the agent the token
-   resolves to. A shared credential collapses all agents into one actor and
-   destroys the audit trail — so each agent gets its own token, even within the
-   same repo.
+1. **One credential per agent — never shared, distinctly named.** Identity *is*
+   attribution. Every status change, comment, and ticket is stamped with the agent
+   the token resolves to. A shared credential collapses all agents into one actor
+   and destroys the audit trail — so each agent gets its own token, even within the
+   same repo. When several agents share one environment, the practical corollary is
+   to give each a distinctly-named secret (`KANBAN_TOKEN_<NAME>`) rather than a
+   single ambient credential, so a session can only ever act *as itself*.
 
 2. **Separate the credential that *creates* identities from the one that *does
    work*.** Provisioning (mint an agent, grant access) uses a different header and
@@ -46,11 +48,13 @@ goal drives the whole auth model:
    that doesn't write an attributed log line is invisible to review — hence the
    convention that every `PATCH` carries a `_log` message.
 
-8. **Identity belongs in per-agent config and memory, not collective docs.** An
-   agent reads its identity from its own environment and records "I am _X_" in its
-   own memory. A specific agent's name written into a shared/collective doc is
-   read by *every* agent as if it were theirs — a reliable source of
-   mis-attribution.
+8. **Identity belongs in per-agent config and memory, not collective docs.** A
+   session has no innate memory of who it is, so every run it reads its identity
+   from its own environment and (on first mint/confirm) records "I am _X_" in its
+   own local/per-agent memory. A specific agent's name written into a
+   shared/collective doc is read by *every* agent as if it were theirs — a reliable
+   source of mis-attribution. Per-session, per-agent memory is what lets a fleet
+   stay correctly attributed without a central registry.
 
 ## Other transferable choices
 

@@ -95,10 +95,14 @@ the two are interchangeable. Attachment storage is likewise env-selected in
 `src/storage.js`: `S3_BUCKET` set → `S3Storage` (presigned downloads), else
 `LocalStorage` under `UPLOAD_DIR`.
 
-The schema (`server/db/schema.sql`) auto-applies on first Postgres container
-init. `server/scripts/`: `seed.js` (demo data, TRUNCATEs first),
-`mint-token.js` (per-agent token), `init-prod.js` (clean prod bootstrap —
-schema + admin upsert from `MANAGER_PASSWORD`, no demo data).
+The schema is **migration-driven**: `server/scripts/migrate.js` runs on api (and
+seed) startup, applying the baseline (`db/schema.sql`) then each
+`db/migrations/*.sql` not yet recorded in `schema_migrations` — idempotent,
+advisory-locked, one transaction per step. This is the update process: a fresh DB
+gets the full schema, an existing one gets only the pending migrations (data
+preserved). `server/scripts/`: `migrate.js` (runner), `seed.js` (demo data,
+TRUNCATEs first), `mint-token.js` (per-agent token), `init-prod.js` (clean prod
+bootstrap — migrate + admin upsert from `MANAGER_PASSWORD`, no demo data).
 
 For the full endpoint list and field maps, see [`API_CONTRACT.md`](API_CONTRACT.md)
 — it is the source of truth, kept in sync with the routes.
@@ -172,6 +176,6 @@ See `server/db/schema.sql`. Key points:
   with the Vite migration.
 - `MemoryStore` is **dev-only**: not concurrency-safe and resets on restart. Any
   real deployment must set `DATABASE_URL` to use `PgStore`.
-- The schema is applied init-only (first Postgres container start). To apply
-  schema changes locally, recreate the volume:
-  `docker compose down -v && docker compose up --build`, then re-seed.
+- Schema changes are applied by the migration runner on startup (see above), so
+  updating is just rebuild + restart — no `down -v`. Add a change as a new
+  `server/db/migrations/NNNN_*.sql`.

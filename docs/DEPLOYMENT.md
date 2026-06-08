@@ -34,13 +34,13 @@ secrets (`.env` is gitignored).
 ## First deploy
 
 1. **Provision PostgreSQL** and point `DATABASE_URL` at it.
-2. **Apply the schema.** The Compose `db` service auto-applies
-   `server/db/schema.sql` on first init of a fresh volume. For a managed
-   database, apply it once manually:
-   `psql "$DATABASE_URL" -f server/db/schema.sql`.
-3. **Bootstrap the admin (clean install).** `server/scripts/init-prod.js` applies
-   the schema idempotently and upserts the `adam` admin from `MANAGER_PASSWORD`,
-   with no demo data. Run it once on first boot (it's safe to re-run).
+2. **Schema is applied by migrations — nothing to do manually.** The migration
+   runner (`server/scripts/migrate.js`) runs on api startup: it applies the
+   baseline then any pending `server/db/migrations/*.sql`, idempotently. You can
+   also run it on demand: `docker compose exec api npm run migrate`.
+3. **Bootstrap the admin (clean install).** `server/scripts/init-prod.js` runs
+   the migrations, then upserts the `adam` admin from `MANAGER_PASSWORD`, with no
+   demo data. It's wired into the prod api `command` and is safe to re-run.
    - To load the sample/demo data instead, use `npm run seed` (it TRUNCATEs
      first — never run it against real data).
 4. **Build and start** the images (`docker compose up --build`, or your registry
@@ -67,9 +67,20 @@ PostgreSQL holds all data; back it up. A reference backup sidecar lives in
 S3 bucket (daily, with a monthly copy). At minimum, schedule a regular `pg_dump`
 of `DATABASE_URL` to off-host storage and test a restore.
 
-## Upgrades
+## Updating
 
-The schema auto-applies **only on first DB init**. To apply schema changes to an
-existing database, run the migration/SQL yourself (or, in dev, recreate the
-volume: `docker compose down -v && docker compose up --build`, then re-seed).
-Rebuild and restart the `api`/`web` images to ship code changes.
+Updates are **non-destructive** — no `down -v`, no data loss:
+
+1. Pull the new code / images.
+2. Rebuild and restart: `docker compose up -d --build` (or roll the new images
+   in your environment).
+
+On startup the api runs the migration runner, which applies any new
+`server/db/migrations/*.sql` to the **existing** database (tracked in
+`schema_migrations`, so each runs once) and leaves your data intact. To apply
+migrations without a full restart: `docker compose exec api npm run migrate`.
+
+**Shipping a schema change:** add a new `server/db/migrations/NNNN_<name>.sql`
+(plain idempotent DDL, no `BEGIN`/`COMMIT` — the runner wraps each file). See
+[`../server/db/migrations/README.md`](../server/db/migrations/README.md). The
+next deploy applies it automatically.

@@ -59,6 +59,7 @@
 
   const PROJECT_MAP = [
     ["desc", "description"],
+    ["openTaskCount", "open_task_count"],
   ];
 
   const AGENT_MAP = [

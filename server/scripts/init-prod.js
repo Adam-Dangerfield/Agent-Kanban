@@ -4,7 +4,8 @@
  *
  *  Runs on api container start in prod (see docker-compose.prod.yml's
  *  command override). It:
- *    1. Applies db/schema.sql (idempotent DDL — safe to re-run).
+ *    1. Runs DB migrations (baseline + db/migrations/*) via migrate.js —
+ *       non-destructive, so prod deploys apply schema changes to the live DB.
  *    2. Upserts the single human admin `adam` with a bcrypt hash of
  *       MANAGER_PASSWORD, is_admin=true. No agents/projects/tickets.
  *
@@ -16,10 +17,9 @@
  *  admin upsert and just ensures the schema — e.g. a schema-only boot).
  * ========================================================== */
 
-const fs = require('fs');
-const path = require('path');
 const { Pool } = require('pg');
 const bcrypt = require('bcryptjs');
+const { migrate } = require('./migrate');
 
 async function main() {
   if (!process.env.DATABASE_URL) {
@@ -28,11 +28,8 @@ async function main() {
   }
   const pool = new Pool({ connectionString: process.env.DATABASE_URL });
 
-  // 1. Apply schema (idempotent: CREATE ... IF NOT EXISTS + DO/EXCEPTION enum guards).
-  const schemaPath = path.join(__dirname, '..', 'db', 'schema.sql');
-  const schema = fs.readFileSync(schemaPath, 'utf8');
-  await pool.query(schema);
-  console.log('[init-prod] schema applied');
+  // 1. Run migrations (baseline + incremental) — non-destructive.
+  await migrate(pool, (m) => console.log(m.replace('[migrate]', '[init-prod]')));
 
   // 2. Upsert the admin from MANAGER_PASSWORD (clean — no demo data).
   const pw = process.env.MANAGER_PASSWORD;

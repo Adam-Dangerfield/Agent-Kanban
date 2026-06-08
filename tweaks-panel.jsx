@@ -234,7 +234,14 @@ function TweaksPanel({ title = 'Tweaks', children }) {
     };
     window.addEventListener('message', onMsg);
     window.parent.postMessage({ type: '__edit_mode_available' }, '*');
-    return () => window.removeEventListener('message', onMsg);
+    // In-app trigger (a settings cog) so the panel is reachable without the
+    // design host harness.
+    const onToggle = () => setOpen((o) => !o);
+    window.addEventListener('kanban:toggle-tweaks', onToggle);
+    return () => {
+      window.removeEventListener('message', onMsg);
+      window.removeEventListener('kanban:toggle-tweaks', onToggle);
+    };
   }, []);
 
   const dismiss = () => {

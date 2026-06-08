@@ -119,7 +119,16 @@ class MemoryStore {
       .map((p) => p.project_id);
   }
 
-  listProjects()      { return this.projects; }
+  listProjects() {
+    // Include open (non-done) task count per project so the UI can show a badge
+    // for every project, not just the one currently loaded.
+    return this.projects.map((p) => ({
+      ...p,
+      open_task_count: this.tasks.filter(
+        (t) => this.projectOfTask(t) === p.id && t.status !== 'done'
+      ).length,
+    }));
+  }
   project(id)         { return this.projects.find((p) => p.id === id) || null; }
 
   // Create a project. The keystone for first-time setup: without at least one
@@ -588,8 +597,14 @@ class PgStore {
 
   // ---- projects / epics / stories ----
   async listProjects() {
+    // open_task_count = non-done tasks per project (one grouped query).
     const { rows } = await this._q(
-      `SELECT id, name, key, color, description FROM projects ORDER BY id`
+      `SELECT p.id, p.name, p.key, p.color, p.description,
+              COUNT(t.id) FILTER (WHERE t.status <> 'done')::int AS open_task_count
+         FROM projects p
+         LEFT JOIN tasks t ON t.project_id = p.id
+        GROUP BY p.id
+        ORDER BY p.id`
     );
     return rows;
   }

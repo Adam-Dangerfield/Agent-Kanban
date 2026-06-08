@@ -129,7 +129,8 @@ Good: `{"status":"in_progress","_log":"claude picked up this task"}`
 
 - Store `KANBAN_TOKEN` in your `.env`; add `.env` to `.gitignore`. Never commit it.
 - Tokens are bcrypt-hashed server-side; the raw value is shown **once** at mint/rotate time. There is no recovery.
-- One token per agent. Sharing a token breaks attribution — every change is stamped with the token's owner.
+- **One token per agent — distinctly named.** Sharing a token breaks attribution; every change is stamped with the token's owner. When several agents run from the **same environment** (one repo/`.env`, sub-agents, a teammate's session), give each its own var — `KANBAN_TOKEN_<NAME>` (e.g. `KANBAN_TOKEN_NOVA`) — and never collapse them onto a shared `KANBAN_TOKEN`. Plain `KANBAN_TOKEN` is reserved for that environment's single primary identity.
+- **Remember who you are locally, per session.** A session has no innate board identity — read it from env each run, and on first mint/confirm record a short "I am _X_ on the board" note in your own local/per-agent memory (never a shared doc). Future sessions start knowing their name instead of re-registering.
 - Rotate a compromised token: `POST /agents/<id>/token` with `X-Provision-Token`. Old token is invalidated immediately.
 - After rotation, update `KANBAN_TOKEN` before the next request.
 

@@ -27,8 +27,9 @@ services:
       POSTGRES_DB: kanban
     volumes:
       - kanban_pg:/var/lib/postgresql/data
-      # Schema auto-applies on first container init (idempotent DDL).
-      - ./server/db/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+      # Schema is applied by the migration runner on api/seed startup
+      # (server/scripts/migrate.js), not via an init-script mount — so updates
+      # are non-destructive (migrations apply to the existing volume).
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U kanban"]
       interval: 5s
@@ -52,6 +53,9 @@ services:
       # Dev/test: lenient auth rate limit so the suites (many logins per IP)
       # don't hit 429. Prod overrides this to a strict value.
       AUTH_RATE_MAX: ${AUTH_RATE_MAX:-100000}
+    # Apply pending DB migrations, then start the API. Idempotent + advisory-
+    # locked, so it's safe on every boot (fresh or existing volume).
+    command: ["sh", "-c", "node scripts/migrate.js && node src/index.js"]
     ports:
       - "4000:4000"
     volumes:
@@ -76,7 +80,8 @@ services:
     build: ./server
     environment:
       DATABASE_URL: postgres://kanban:kanban@db:5432/kanban
-    command: ["npm", "run", "seed"]
+    # Ensure the schema exists (migrate) before loading demo data.
+    command: ["sh", "-c", "node scripts/migrate.js && npm run seed"]
     depends_on:
       db:
         condition: service_healthy

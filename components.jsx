@@ -118,7 +118,7 @@ function relTime(iso) {
 }
 
 /* ---- Dropdown menu (click-outside aware) ------------------- */
-function Menu({ trigger, children, align = "left", width = 220 }) {
+function Menu({ trigger, children, align = "left", width = 220, dir = "down" }) {
   const [open, setOpen] = useState(false);
   const ref = useRef(null);
   useEffect(() => {
@@ -131,7 +131,7 @@ function Menu({ trigger, children, align = "left", width = 220 }) {
     <div className="menu" ref={ref}>
       <div onClick={() => setOpen((o) => !o)}>{trigger}</div>
       {open && (
-        <div className="menu__pop" style={{ [align]: 0, width }} onClick={() => setOpen(false)}>
+        <div className={`menu__pop ${dir === "up" ? "menu__pop--up" : ""}`} style={{ [align]: 0, width }} onClick={() => setOpen(false)}>
           {children}
         </div>
       )}

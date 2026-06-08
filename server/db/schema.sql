@@ -1,10 +1,10 @@
 -- ============================================================
---  Kanban — PostgreSQL schema
---  Mirrors the prototype data model (data.js).
---  Run: psql "$DATABASE_URL" -f server/db/schema.sql
+--  Kanban — PostgreSQL schema (baseline / migration 0000)
+--  All DDL is idempotent (IF NOT EXISTS + enum guards). Applied by the
+--  migration runner (server/scripts/migrate.js), which wraps it in a
+--  transaction — so this file must NOT contain its own BEGIN/COMMIT.
+--  Incremental changes go in server/db/migrations/ (see its README).
 -- ============================================================
-
-BEGIN;
 
 -- ---- enums --------------------------------------------------
 DO $$ BEGIN
@@ -174,5 +174,3 @@ CREATE TABLE IF NOT EXISTS provision_tokens (
   scope        JSONB NOT NULL DEFAULT '[]',   -- [{ "project_id": "...", "max_access": "read|write" }]
   created_at   TIMESTAMPTZ NOT NULL DEFAULT now()
 );
-
-COMMIT;

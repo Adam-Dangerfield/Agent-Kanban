@@ -7,6 +7,7 @@
   "scripts": {
     "dev": "node --watch src/index.js",
     "start": "node src/index.js",
+    "migrate": "node scripts/migrate.js",
     "seed": "node scripts/seed.js",
     "mint-token": "node scripts/mint-token.js"
   },

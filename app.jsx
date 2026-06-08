@@ -288,16 +288,23 @@ function App() {
     return ep ? ep.projectId : null;
   }
 
-  // counts per project (open tickets) — only over loaded tasks
+  // counts per project (open tickets). The selected project uses the live
+  // loaded tasks so the badge updates as cards move; other projects use the
+  // server-provided openTaskCount (from GET /projects) so every project shows a
+  // real count without loading all their tasks.
   const projCounts = useMemo(() => {
     const m = {};
     projects.forEach(function (p) {
-      m[p.id] = tasks.filter(function (tk) {
-        return epicProject(tk) === p.id && tk.status !== "done";
-      }).length;
+      if (p.id === projectId) {
+        m[p.id] = tasks.filter(function (tk) {
+          return epicProject(tk) === p.id && tk.status !== "done";
+        }).length;
+      } else {
+        m[p.id] = p.openTaskCount != null ? p.openTaskCount : 0;
+      }
     });
     return m;
-  }, [tasks, projects, epics, stories]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [tasks, projects, projectId, epics, stories]); // eslint-disable-line react-hooks/exhaustive-deps
 
   /* ----------------------------------------------------------
      Permission helpers derived from meInfo
@@ -694,21 +701,27 @@ function App() {
           )}
         </nav>
         <div className="side__foot">
-          <Menu align="left" width={200} trigger={
-            <button className="whoami">
-              <Avatar agent={auth.as} size={26} />
-              <span className="whoami__name">{auth.as.name}<span className="whoami__role">{auth.viaToken ? "via token" : auth.as.role}</span></span>
-              <Icon name="chevron-down" size={14} />
-            </button>
-          }>
-            <div className="menu__head">Signed in as {auth.as.name}</div>
-            {isAdmin && (
-              <button className="menu__item" onClick={() => { setShowAdmin(true); }}>
-                <Icon name="sliders" size={15} /> Admin panel
+          <div className="side__footrow">
+            <Menu align="left" width={200} dir="up" trigger={
+              <button className="whoami">
+                <Avatar agent={auth.as} size={26} />
+                <span className="whoami__name">{auth.as.name}<span className="whoami__role">{auth.viaToken ? "via token" : auth.as.role}</span></span>
+                <Icon name="chevron-down" size={14} />
               </button>
-            )}
-            <button className="menu__item" onClick={handleSignOut}><Icon name="logout" size={15} /> Sign out</button>
-          </Menu>
+            }>
+              <div className="menu__head">Signed in as {auth.as.name}</div>
+              {isAdmin && (
+                <button className="menu__item" onClick={() => { setShowAdmin(true); }}>
+                  <Icon name="sliders" size={15} /> Admin panel
+                </button>
+              )}
+              <button className="menu__item" onClick={handleSignOut}><Icon name="logout" size={15} /> Sign out</button>
+            </Menu>
+            <button className="side__cog" title="Display settings"
+              onClick={() => window.dispatchEvent(new Event("kanban:toggle-tweaks"))}>
+              <Icon name="sliders" size={16} />
+            </button>
+          </div>
         </div>
       </aside>
 
