@@ -506,6 +506,46 @@ keep their real dates instead of all reading "today". Omit them on normal
 creates and the server stamps now(). There is no `completed_at` field — done
 work carries its `created_at`, not a separate completion date.
 
+### 5h. Bulk-create tasks (imports / bulk ops)
+
+When importing a tracker or creating many tasks at once, **do not loop one
+`POST /tasks` per task** — every request pays a fresh auth check and several DB
+round-trips, so a tight loop throttles itself (and a small server will start
+returning 500s under the concurrency). Use the bulk endpoint instead: it inserts
+the whole batch in a single transaction.
+
+```bash
+curl -s -X POST "http://localhost:4000/api/projects/data/tasks/bulk" \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $TOKEN" \
+  -d '{
+    "tasks": [
+      { "id": "DATA-101", "title": "Ingest pipeline",  "status": "done",
+        "story_id": "FOUND-S01", "created_at": "2026-04-10T14:00:00Z" },
+      { "id": "DATA-102", "title": "Schema migration", "priority": "high" },
+      { "title": "No-id task — server generates DATA-9xx" }
+    ]
+  }'
+```
+
+Each entry takes the **same fields as the single create** (`title` required;
+optional `id`, `story_id`, `status`, `priority`, `assignee_id`, `created_at`, …).
+Response:
+
+```json
+{ "created": ["DATA-101", "DATA-102", "DATA-903"],
+  "skipped": [],
+  "errors":  [] }
+```
+
+- **Idempotent** — a task whose explicit `id` already exists is returned in
+  `skipped` (not an error), so re-running an interrupted import is safe.
+- **Fault-isolated** — a single bad row (e.g. missing `title`) lands in `errors`
+  (`{ ref, error }`) while every good row in the batch still commits.
+- **Cap:** ≤ 500 tasks per request — chunk larger imports into batches of a few
+  hundred. Create the project → epics → stories first (§5g) so `story_id`
+  references resolve.
+
 ### 5f. Reassign a ticket
 
 ```bash
@@ -742,6 +782,7 @@ names (except attachment uploads which are `multipart/form-data`).
 | `GET` | `/api/projects/:id/tasks` | Bearer | read on project | List tasks for a project (hydrated) |
 | `GET` | `/api/tasks/:id` | Bearer | read on task's project | Get a single task (hydrated) |
 | `POST` | `/api/projects/:id/tasks` | Bearer | write on project | Create a task (optional `id`, `story_id`, `created_at`, `updated_at`) |
+| `POST` | `/api/projects/:id/tasks/bulk` | Bearer | write on project | Bulk-create tasks in one transaction (`{tasks:[…]}`, ≤500); returns `{created,skipped,errors}` |
 | `PATCH` | `/api/tasks/:id` | Bearer | write on task's project | Update task fields; optional `_log` |
 | `DELETE` | `/api/tasks/:id` | Bearer | write on task's project | Delete a task |
 | `POST` | `/api/tasks/:id/comments` | Bearer | write on task's project | Post a comment (message) |

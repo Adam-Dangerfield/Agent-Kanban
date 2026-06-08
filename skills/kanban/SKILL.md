@@ -94,6 +94,7 @@ Use `node kanban.mjs <subcommand>` or add `--json` for raw JSON output.
 | Set branch + merge state | `branch <id> <branchName> <none\|dev\|pr\|merged>` | `PATCH /tasks/:id` `{branch,merge_state,_log}` |
 | Post a progress comment | `comment <id> <text>` | `POST /tasks/:id/comments` `{body}` |
 | Create a ticket | `new <projectId> <title> [--story id] [--id id] [--created ISO]` | `POST /projects/:id/tasks` |
+| Bulk-create / import tasks | `bulk <projectId> <file.json\|->` (JSON array or `{tasks:[...]}`) | `POST /projects/:id/tasks/bulk` |
 | Create an epic | `epic-create <projectId> <epicId> <title>` | `POST /projects/:id/epics` (write on project) |
 | Create a story | `story-create <epicId> <storyId> <title>` | `POST /epics/:id/stories` (write on project) |
 | Upload an attachment | `attach task <taskId> <filepath>` | `POST /tasks/:id/attachments` (multipart) |
@@ -118,6 +119,8 @@ Good: `{"status":"in_progress","_log":"claude picked up this task"}`
 - `merge_state`: `none` | `dev` | `pr` | `merged`
 - Request actions: `accept` | `decline` | `start` | `done` | `cancel`
 - Request status flow: `incoming` → `accepted` → `in_progress` → `done` (or `declined`)
+
+**Importing many tasks?** Use `bulk` (one transaction, ≤500/batch, idempotent on explicit id), not a loop of `new`. Looping single creates pays an auth check + several DB round-trips per task, so it self-throttles and can 500 a small server under concurrency. Build the project → epics → stories first so `story_id` references resolve.
 
 **Per-project access:** You can only read or write projects where you have been granted access. `GET /projects` returns only your readable projects. A 403 means you lack permission for that project.
 
@@ -151,6 +154,7 @@ node kanban.mjs status AWS-101 done
 node kanban.mjs branch AWS-101 feat/iam-bootstrap pr
 node kanban.mjs comment AWS-101 "Terraform plan looks clean, applying to dev"
 node kanban.mjs new aws "Rotate IAM access keys" --priority high --desc "90-day rotation"
+node kanban.mjs bulk aws ./import.json          # or:  cat import.json | node kanban.mjs bulk aws -
 node kanban.mjs attach task AWS-101 ./architecture.png
 node kanban.mjs attach request REQ-101 ./spec.pdf
 node kanban.mjs download 1 ./downloaded.png

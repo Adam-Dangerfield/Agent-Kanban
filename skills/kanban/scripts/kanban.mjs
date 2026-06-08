@@ -25,6 +25,8 @@
  *   comment <id> <text...>                Post a comment
  *   new <projectId> <title...> [--priority p] [--desc d] [--status s] [--story id] [--id id] [--created ISO]
  *                                          Create a task (--created backdates for imports)
+ *   bulk <projectId> <file.json|->         Bulk-create tasks from JSON (array or {tasks:[...]})
+ *                                          in one transaction; chunks ≤500; idempotent. Use for imports.
  *   epic-create <projectId> <epicId> <title...>
  *                                          Create an epic (client-supplied id; needs write on project)
  *   story-create <epicId> <storyId> <title...>
@@ -311,6 +313,7 @@ Subcommands:
   branch <id> <branchName> <none|dev|pr|merged>
   comment <id> <text...>
   new <projectId> <title...> [--priority <p>] [--desc <d>] [--status <s>] [--story <id>] [--id <id>] [--created <ISO>]
+  bulk <projectId> <file.json|->   (bulk-create tasks from JSON; chunks ≤500; idempotent — for imports)
   epic-create <projectId> <epicId> <title...>
   story-create <epicId> <storyId> <title...>
   attach <task|request> <entityId> <filepath>
@@ -458,6 +461,63 @@ async function cmdNew(args) {
     body: JSON.stringify(payload),
   });
   print(data);
+}
+
+// bulk <projectId> <file.json|-> — bulk-create tasks from a JSON file (or stdin
+// with "-"). Accepts either a bare array of task objects or { "tasks": [...] }.
+// Chunks into batches of ≤500 and aggregates created/skipped/errors. Use this
+// for tracker imports — far faster than looping `new`, and idempotent (a task
+// whose explicit id already exists is skipped, so reruns are safe).
+async function cmdBulk(args) {
+  requireEnv();
+  const [projectId, file] = args;
+  if (!projectId || !file) {
+    die('Usage: bulk <projectId> <file.json|->   (JSON: a [task,...] array or {"tasks":[...]})');
+  }
+  let raw;
+  try {
+    raw = file === '-' ? readFileSync(0, 'utf8') : readFileSync(file, 'utf8');
+  } catch (e) {
+    die(`Cannot read ${file === '-' ? 'stdin' : file}: ${e.message}`);
+  }
+  let parsed;
+  try { parsed = JSON.parse(raw); } catch (e) { die(`Invalid JSON: ${e.message}`); }
+  const tasks = Array.isArray(parsed) ? parsed : parsed.tasks;
+  if (!Array.isArray(tasks)) die('JSON must be an array of tasks or {"tasks":[...]}.');
+  if (tasks.length === 0) die('No tasks to create.');
+
+  const CHUNK = 500;
+  const total = { created: [], skipped: [], errors: [] };
+  for (let i = 0; i < tasks.length; i += CHUNK) {
+    const batch = tasks.slice(i, i + CHUNK);
+    const res = await apiFetch(`/projects/${projectId}/tasks/bulk`, {
+      method: 'POST',
+      headers: authHeaders({ 'Content-Type': 'application/json' }),
+      body: JSON.stringify({ tasks: batch }),
+    });
+    total.created.push(...(res.created || []));
+    total.skipped.push(...(res.skipped || []));
+    total.errors.push(...(res.errors || []));
+    if (!jsonMode) {
+      process.stderr.write(
+        `  batch ${Math.floor(i / CHUNK) + 1}: +${(res.created || []).length} created, ` +
+        `${(res.skipped || []).length} skipped, ${(res.errors || []).length} errors\n`
+      );
+    }
+  }
+  if (jsonMode) {
+    print(total);
+  } else {
+    process.stdout.write(
+      `Done: ${total.created.length} created, ${total.skipped.length} skipped, ` +
+      `${total.errors.length} errors (of ${tasks.length} input).\n`
+    );
+    if (total.errors.length) {
+      process.stdout.write('Errors:\n');
+      for (const e of total.errors.slice(0, 20)) process.stdout.write(`  - ${e.ref}: ${e.error}\n`);
+      if (total.errors.length > 20) process.stdout.write(`  …and ${total.errors.length - 20} more\n`);
+    }
+  }
 }
 
 // epic-create <projectId> <epicId> <title...>
@@ -855,6 +915,7 @@ const commands = {
   branch:         () => cmdBranch(rest),
   comment:        () => cmdComment(rest),
   new:            () => cmdNew(rest),
+  bulk:           () => cmdBulk(rest),
   'epic-create':  () => cmdEpicCreate(rest),
   'story-create': () => cmdStoryCreate(rest),
   attach:         () => cmdAttach(rest),

@@ -240,6 +240,14 @@ POST   /api/projects/:id/tasks    { title, ... }        -> 201 Task
        (optional id, story_id, created_at, updated_at — created_at/updated_at
         are honoured when supplied so historical imports keep real dates;
         else stamped now())
+POST   /api/projects/:id/tasks/bulk  { tasks:[ {title,...}, ... ] }
+                                                        -> 201 { created:[id], skipped:[id], errors:[{ref,error}] }
+       (one transaction; ≤500 tasks/request; each task takes the same optional
+        fields as the single create. Idempotent: a task whose explicit id
+        already exists is skipped (not an error). A row that fails (e.g. missing
+        title) is isolated via SAVEPOINT and reported in errors; the rest commit.
+        Use this for tracker imports / bulk ops — far higher throughput than
+        N single POSTs, which each pay an auth + multi-query cost.)
 PATCH  /api/tasks/:id             { ...fields, _log? }  -> Task | 404
 DELETE /api/tasks/:id                                   -> 204
 POST   /api/tasks/:id/comments    { body }              -> 201 Comment

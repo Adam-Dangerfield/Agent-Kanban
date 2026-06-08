@@ -93,12 +93,40 @@ function safeFilename(name) {
 //  Auth helpers
 // ============================================================
 
+// ---- agent-token verification cache -------------------------
+// bcrypt.compare is intentionally expensive (~50-100ms of CPU each). With the
+// pure-JS bcryptjs that cost lands on Node's single event-loop thread, so a
+// burst of API calls (e.g. a bulk import — same token, thousands of requests)
+// serialises on bcrypt and throughput collapses to a few RPS. We cache POSITIVE
+// agent-token verifications for a short TTL so a repeat caller skips bcrypt.
+// Keyed by sha256(raw) so we never hold raw tokens in memory. The JWT path is
+// left uncached so it honours token expiry on every call.
+// Trade-off: a rotated agent token keeps working for up to TOKEN_CACHE_TTL_MS.
+const TOKEN_CACHE = new Map();   // sha256(raw) -> { actor, exp }
+const TOKEN_CACHE_TTL_MS = Number(process.env.TOKEN_CACHE_TTL_MS || 60_000);
+const TOKEN_CACHE_MAX    = Number(process.env.TOKEN_CACHE_MAX || 5_000);
+
+function sha256(s) { return crypto.createHash('sha256').update(s).digest('hex'); }
+
+function tokenCacheGet(key) {
+  const hit = TOKEN_CACHE.get(key);
+  if (!hit) return null;
+  if (hit.exp <= Date.now()) { TOKEN_CACHE.delete(key); return null; }
+  return hit.actor;
+}
+
+function tokenCacheSet(key, actor) {
+  // Cheap bounded eviction: when full, drop the whole map (rare, O(1) amortised).
+  if (TOKEN_CACHE.size >= TOKEN_CACHE_MAX) TOKEN_CACHE.clear();
+  TOKEN_CACHE.set(key, { actor, exp: Date.now() + TOKEN_CACHE_TTL_MS });
+}
+
 /**
  * Resolve an actor from a raw Bearer value.
  * Returns { id, name, role, is_admin } or null.
  */
 async function resolveBearer(raw) {
-  // 1. Try JWT first.
+  // 1. Try JWT first (cheap; not cached so expiry is respected every call).
   try {
     const payload = jwt.verify(raw, JWT_SECRET);
     if (payload && payload.sub) {
@@ -107,13 +135,21 @@ async function resolveBearer(raw) {
     }
   } catch (_) { /* not a valid JWT — fall through */ }
 
-  // 2. Try raw agent token (prefix + bcrypt or plain compare).
+  // 2. Raw agent token. bcrypt is the hot path under load, so cache positives.
+  const cacheKey = sha256(raw);
+  const cached = tokenCacheGet(cacheKey);
+  if (cached) return cached;
+
   const prefix = raw.slice(0, 13);
   const candidate = await store.agentByToken(prefix);
   if (candidate) {
     if (USE_PG) {
       const ok = await bcrypt.compare(raw, candidate.token_hash);
-      if (ok) return { id: candidate.id, name: candidate.name, role: candidate.role, is_admin: candidate.is_admin || false };
+      if (ok) {
+        const actor = { id: candidate.id, name: candidate.name, role: candidate.role, is_admin: candidate.is_admin || false };
+        tokenCacheSet(cacheKey, actor);
+        return actor;
+      }
     } else {
       if (candidate.token === raw) return { id: candidate.id, name: candidate.name, role: candidate.role, is_admin: candidate.is_admin || false };
     }
@@ -358,6 +394,7 @@ app.post('/api/agents/:id/token', async (req, res) => {
 
     const token = genAgentToken();
     await store.setAgentToken(req.params.id, token);
+    TOKEN_CACHE.clear(); // a rotated token must stop working immediately
     res.json({ id: req.params.id, token, token_prefix: token.slice(0, 13) });
   } catch (e) { console.error(e); res.status(500).json({ error: 'internal error' }); }
 });
@@ -379,6 +416,7 @@ app.patch('/api/agents/:id', async (req, res) => {
     if (body.name     !== undefined) patch.name     = body.name;
     if (body.role     !== undefined) patch.role     = body.role;
     const updated = await store.updateAgent(req.params.id, patch);
+    TOKEN_CACHE.clear(); // is_admin/name/role are carried in cached actors
     res.json(updated);
   } catch (e) { console.error(e); res.status(500).json({ error: 'internal error' }); }
 });
@@ -636,6 +674,27 @@ app.post('/api/projects/:id/tasks', async (req, res) => {
     if (!project) return res.status(404).json({ error: 'unknown project' });
     const task = await store.createTask({ ...req.body, project_id: req.params.id }, req.actor);
     res.status(201).json(task);
+  } catch (e) { console.error(e); res.status(500).json({ error: 'internal error' }); }
+});
+
+// Bulk create — one transaction, many tasks. Built for tracker imports / bulk
+// ops where the per-request bcrypt + round-trips would otherwise throttle you.
+// Body: { tasks: [ { title, id?, status?, story_id?, created_at?, ... }, ... ] }
+// Idempotent: items with an existing explicit id are skipped (not errors).
+// Returns 201 { created:[ids], skipped:[ids], errors:[{ref,error}] }.
+app.post('/api/projects/:id/tasks/bulk', async (req, res) => {
+  try {
+    if (!await canWrite(req.actor, req.isAdmin, req.params.id)) {
+      return res.status(403).json({ error: 'forbidden' });
+    }
+    const project = await store.project(req.params.id);
+    if (!project) return res.status(404).json({ error: 'unknown project' });
+    const items = req.body && Array.isArray(req.body.tasks) ? req.body.tasks : null;
+    if (!items) return res.status(400).json({ error: 'body must be { tasks: [ ... ] }' });
+    if (items.length === 0) return res.status(400).json({ error: 'tasks array is empty' });
+    if (items.length > 500) return res.status(400).json({ error: 'max 500 tasks per bulk request' });
+    const result = await store.createTasksBulk(req.params.id, items, req.actor);
+    res.status(201).json(result);
   } catch (e) { console.error(e); res.status(500).json({ error: 'internal error' }); }
 });
 

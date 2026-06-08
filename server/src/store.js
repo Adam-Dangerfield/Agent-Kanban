@@ -230,6 +230,22 @@ class MemoryStore {
     return this.hydrateTask(task);
   }
 
+  // Bulk create (dev/in-memory parity with PgStore). Idempotent on explicit id.
+  createTasksBulk(projectId, items, actorId) {
+    const created = [], skipped = [], errors = [];
+    for (const data of items) {
+      const ref = data.id || data.title || '(untitled)';
+      try {
+        if (data.id && this.tasks.find((t) => t.id === data.id)) { skipped.push(data.id); continue; }
+        const t = this.createTask({ ...data, project_id: projectId }, actorId);
+        created.push(t.id);
+      } catch (e) {
+        errors.push({ ref, error: (e && e.message) || 'insert failed' });
+      }
+    }
+    return { created, skipped, errors };
+  }
+
   updateTask(id, patch, actorId, logText) {
     const t = this.tasks.find((x) => x.id === id);
     if (!t) return null;
@@ -416,7 +432,21 @@ class MemoryStore {
 class PgStore {
   constructor() {
     const { Pool } = require('pg');
-    this._pool = new Pool({ connectionString: process.env.DATABASE_URL });
+    this._pool = new Pool({
+      connectionString: process.env.DATABASE_URL,
+      // Bound the pool and fail a stuck acquire fast (clean 500) instead of
+      // hanging forever — the old default (max 10, connectionTimeoutMillis 0)
+      // let a connection storm queue indefinitely under load. All tunable.
+      max:                     Number(process.env.PG_POOL_MAX || 10),
+      connectionTimeoutMillis: Number(process.env.PG_CONNECT_TIMEOUT_MS || 5_000),
+      idleTimeoutMillis:       Number(process.env.PG_IDLE_TIMEOUT_MS || 30_000),
+    });
+    // An idle client erroring out (e.g. a dropped TCP connection) emits 'error'
+    // on the pool; without a listener newer node treats it as unhandled and can
+    // crash the process. Log and let the pool recycle the client.
+    this._pool.on('error', (err) => {
+      console.error('[pg pool] idle client error:', err && err.message);
+    });
   }
 
   _q(text, params) { return this._pool.query(text, params); }
@@ -716,12 +746,19 @@ class PgStore {
   }
 
   async nextTaskId(projectId) {
-    const projRes = await this._q(
+    return this._nextTaskIdOnClient(this._pool, projectId);
+  }
+
+  // Same as nextTaskId but runs on a caller-supplied client/pool so id
+  // generation can share the insert transaction. (Accepts the pool too, since
+  // pool.query and client.query share a signature.)
+  async _nextTaskIdOnClient(q, projectId) {
+    const projRes = await q.query(
       `SELECT key FROM projects WHERE id = $1`, [projectId]
     );
     if (!projRes.rows[0]) throw new Error(`unknown project: ${projectId}`);
     const key = projRes.rows[0].key;
-    const maxRes = await this._q(
+    const maxRes = await q.query(
       `SELECT COALESCE(MAX(CAST(SPLIT_PART(id, '-', 2) AS INTEGER)), 899) AS mx
          FROM tasks WHERE project_id = $1`,
       [projectId]
@@ -730,44 +767,126 @@ class PgStore {
     return `${key}-${Math.max(900, mx + 1)}`;
   }
 
+  // Column list returned by INSERT so we can build the response without a
+  // re-SELECT. A brand-new task has no comments/attachments and exactly the one
+  // activity row we write here, so the old task()+_hydrate() (5 extra queries,
+  // 4 of them a parallel fan-out) was pure overhead on the hot insert path.
+  static get _TASK_COLS() {
+    return `id, project_id, story_id, title, description, notes,
+            status, priority, assignee_id, branch, merge_state, from_request_id,
+            created_at, updated_at`;
+  }
+
+  // Insert one task + its deps + the "created" activity row on a single client
+  // (caller owns the transaction). Returns the hydrated-shape task object.
+  async _insertTaskOnClient(client, data, actorId) {
+    const id = data.id || await this._nextTaskIdOnClient(client, data.project_id);
+    const taskRes = await client.query(
+      // created_at/updated_at: honour supplied values (historical imports),
+      // else COALESCE to now() so normal creates keep DB-default timestamps.
+      `INSERT INTO tasks
+         (id, project_id, story_id, title, description, notes,
+          status, priority, assignee_id, branch, merge_state, from_request_id,
+          created_at, updated_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,
+               COALESCE($13::timestamptz, now()),
+               COALESCE($14::timestamptz, $13::timestamptz, now()))
+       RETURNING ${PgStore._TASK_COLS}`,
+      [
+        id,
+        data.project_id,
+        data.story_id || null,
+        data.title,
+        data.description || '',
+        data.notes || '',
+        data.status      || 'backlog',
+        data.priority    || 'medium',
+        data.assignee_id || null,
+        data.branch      || null,
+        data.merge_state || 'none',
+        data.from_request_id || null,
+        data.created_at || null,
+        data.updated_at || null,
+      ]
+    );
+    const deps = data.deps || [];
+    for (const dep of deps) {
+      await client.query(
+        `INSERT INTO task_deps (task_id, depends_on) VALUES ($1, $2) ON CONFLICT DO NOTHING`,
+        [id, dep]
+      );
+    }
+    const actRes = await client.query(
+      `INSERT INTO activity (entity_type, entity_id, actor_id, text)
+       VALUES ('task', $1, $2, 'created this ticket')
+       RETURNING id, entity_type, entity_id, actor_id, text, created_at`,
+      [id, actorId]
+    );
+    return {
+      ...taskRes.rows[0],
+      deps:        deps.slice(),
+      comments:    [],
+      activity:    [actRes.rows[0]],
+      attachments: [],
+    };
+  }
+
   async createTask(data, actorId) {
-    const id = data.id || await this.nextTaskId(data.project_id);
     const client = await this._pool.connect();
     try {
       await client.query('BEGIN');
-      await client.query(
-        // created_at/updated_at: honour supplied values (historical imports),
-        // else COALESCE to now() so normal creates keep DB-default timestamps.
-        `INSERT INTO tasks
-           (id, project_id, story_id, title, description, notes,
-            status, priority, assignee_id, branch, merge_state, from_request_id,
-            created_at, updated_at)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,
-                 COALESCE($13::timestamptz, now()),
-                 COALESCE($14::timestamptz, $13::timestamptz, now()))`,
-        [
-          id,
-          data.project_id,
-          data.story_id || null,
-          data.title,
-          data.description || '',
-          data.notes || '',
-          data.status      || 'backlog',
-          data.priority    || 'medium',
-          data.assignee_id || null,
-          data.branch      || null,
-          data.merge_state || 'none',
-          data.from_request_id || null,
-          data.created_at || null,
-          data.updated_at || null,
-        ]
-      );
-      const deps = data.deps || [];
-      for (const dep of deps) {
-        await client.query(
-          `INSERT INTO task_deps (task_id, depends_on) VALUES ($1, $2) ON CONFLICT DO NOTHING`,
-          [id, dep]
-        );
+      const task = await this._insertTaskOnClient(client, data, actorId);
+      await client.query('COMMIT');
+      return task;
+    } catch (e) {
+      await client.query('ROLLBACK');
+      throw e;
+    } finally {
+      client.release();
+    }
+  }
+
+  // Bulk-insert many tasks in ONE transaction on ONE connection. Each item is
+  // wrapped in a SAVEPOINT so a single bad row (FK violation, etc.) is isolated
+  // instead of poisoning the whole batch. Idempotent: an item whose explicit id
+  // already exists is skipped. Returns { created:[ids], skipped:[ids], errors }.
+  async createTasksBulk(projectId, items, actorId) {
+    const created = [], skipped = [], errors = [];
+    // Generate ids for id-less items within the batch from a single running
+    // counter (a per-item SELECT MAX would race against uncommitted siblings).
+    let genKey = null, genNum = null;
+    const client = await this._pool.connect();
+    try {
+      await client.query('BEGIN');
+      for (const data of items) {
+        const ref = data.id || data.title || '(untitled)';
+        await client.query('SAVEPOINT sp');
+        try {
+          if (data.id) {
+            const dup = await client.query(`SELECT 1 FROM tasks WHERE id = $1`, [data.id]);
+            if (dup.rowCount) { skipped.push(data.id); await client.query('RELEASE SAVEPOINT sp'); continue; }
+          }
+          let id = data.id;
+          if (!id) {
+            if (genKey === null) {
+              const pj = await client.query(`SELECT key FROM projects WHERE id = $1`, [projectId]);
+              if (!pj.rows[0]) throw new Error(`unknown project: ${projectId}`);
+              genKey = pj.rows[0].key;
+              const mx = await client.query(
+                `SELECT COALESCE(MAX(CAST(SPLIT_PART(id, '-', 2) AS INTEGER)), 899) AS mx
+                   FROM tasks WHERE project_id = $1`, [projectId]
+              );
+              genNum = Math.max(900, parseInt(mx.rows[0].mx, 10) + 1);
+            }
+            id = `${genKey}-${genNum++}`;
+          }
+          const task = await this._insertTaskOnClient(client, { ...data, id, project_id: projectId }, actorId);
+          created.push(task.id);
+          await client.query('RELEASE SAVEPOINT sp');
+        } catch (e) {
+          await client.query('ROLLBACK TO SAVEPOINT sp');
+          errors.push({ ref, error: (e && e.message) || 'insert failed' });
+        }
       }
       await client.query('COMMIT');
     } catch (e) {
@@ -776,8 +895,7 @@ class PgStore {
     } finally {
       client.release();
     }
-    await this.log('task', id, actorId, 'created this ticket');
-    return this.task(id);
+    return { created, skipped, errors };
   }
 
   async updateTask(id, patch, actorId, logText) {
