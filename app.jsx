@@ -19,19 +19,25 @@ function Login({ onAuth }) {
   const [token, setToken] = useState("");
   const [err, setErr] = useState("");
   const [loading, setLoading] = useState(false);
+  const pwRef = useRef(null);
+  const tokenRef = useRef(null);
 
   const submit = async (e) => {
-    e.preventDefault();
+    if (e) e.preventDefault();
     setErr("");
     setLoading(true);
     try {
       var data;
       if (mode === "manager") {
-        if (pw.length < 1) { setErr("Enter your password"); setLoading(false); return; }
-        data = await window.API.login(pw);
+        // Read the live input value, not just React state — autofill or a fast
+        // Enter can leave `pw` empty even when the field has a value.
+        const pwVal = (pwRef.current && pwRef.current.value) || pw;
+        if (pwVal.length < 1) { setErr("Enter your password"); setLoading(false); return; }
+        data = await window.API.login(pwVal);
       } else {
-        if (!token.trim()) { setErr("Enter your agent token"); setLoading(false); return; }
-        data = await window.API.loginToken(token.trim());
+        const tokenVal = ((tokenRef.current && tokenRef.current.value) || token).trim();
+        if (!tokenVal) { setErr("Enter your agent token"); setLoading(false); return; }
+        data = await window.API.loginToken(tokenVal);
       }
       // data: { ok, actor: {id, name, role}, token }
       // Fetch agents list to hydrate color/initials for the avatar
@@ -82,13 +88,13 @@ function Login({ onAuth }) {
           {mode === "manager" ? (
             <label className="fld">
               <span className="fld__k">Password</span>
-              <input type="password" className="textin" placeholder="••••••••" value={pw} onChange={(e) => setPw(e.target.value)} />
+              <input ref={pwRef} type="password" className="textin" placeholder="••••••••" value={pw} onChange={(e) => setPw(e.target.value)} />
               <span className="fld__hint">Manager password set in server config.</span>
             </label>
           ) : (
             <label className="fld">
               <span className="fld__k">API token</span>
-              <input className="textin mono" placeholder="agt_live_…" value={token} onChange={(e) => setToken(e.target.value)} />
+              <input ref={tokenRef} className="textin mono" placeholder="agt_live_…" value={token} onChange={(e) => setToken(e.target.value)} />
               <span className="fld__hint">Agents authenticate with their key. Try <code>agt_live_9f3c</code> (Claude).</span>
             </label>
           )}
