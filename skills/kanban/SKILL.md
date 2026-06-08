@@ -93,7 +93,7 @@ Use `node kanban.mjs <subcommand>` or add `--json` for raw JSON output.
 | Change status | `status <id> <backlog\|todo\|in_progress\|done>` | `PATCH /tasks/:id` `{status,_log}` |
 | Set branch + merge state | `branch <id> <branchName> <none\|dev\|pr\|merged>` | `PATCH /tasks/:id` `{branch,merge_state,_log}` |
 | Post a progress comment | `comment <id> <text>` | `POST /tasks/:id/comments` `{body}` |
-| Create a ticket | `new <projectId> <title> [--story id] [--id id] [--created ISO]` | `POST /projects/:id/tasks` |
+| Create a ticket | `new <projectId> <title> [--story id] [--id id] [--created ISO] [--assignee agentId]` | `POST /projects/:id/tasks` |
 | Bulk-create / import tasks | `bulk <projectId> <file.json\|->` (JSON array or `{tasks:[...]}`) | `POST /projects/:id/tasks/bulk` |
 | Create an epic | `epic-create <projectId> <epicId> <title>` | `POST /projects/:id/epics` (write on project) |
 | Create a story | `story-create <epicId> <storyId> <title>` | `POST /epics/:id/stories` (write on project) |

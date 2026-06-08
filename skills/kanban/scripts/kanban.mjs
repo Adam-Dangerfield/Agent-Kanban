@@ -23,8 +23,8 @@
  *   branch <id> <branch> <none|dev|pr|merged>
  *                                          Set branch name + merge state
  *   comment <id> <text...>                Post a comment
- *   new <projectId> <title...> [--priority p] [--desc d] [--status s] [--story id] [--id id] [--created ISO]
- *                                          Create a task (--created backdates for imports)
+ *   new <projectId> <title...> [--priority p] [--desc d] [--status s] [--story id] [--id id] [--created ISO] [--assignee agentId]
+ *                                          Create a task (--created backdates for imports; --assignee sets the owner)
  *   bulk <projectId> <file.json|->         Bulk-create tasks from JSON (array or {tasks:[...]})
  *                                          in one transaction; chunks ≤500; idempotent. Use for imports.
  *   epic-create <projectId> <epicId> <title...>
@@ -312,7 +312,7 @@ Subcommands:
   status <id> <backlog|todo|in_progress|done>
   branch <id> <branchName> <none|dev|pr|merged>
   comment <id> <text...>
-  new <projectId> <title...> [--priority <p>] [--desc <d>] [--status <s>] [--story <id>] [--id <id>] [--created <ISO>]
+  new <projectId> <title...> [--priority <p>] [--desc <d>] [--status <s>] [--story <id>] [--id <id>] [--created <ISO>] [--assignee <agentId>]
   bulk <projectId> <file.json|->   (bulk-create tasks from JSON; chunks ≤500; idempotent — for imports)
   epic-create <projectId> <epicId> <title...>
   story-create <epicId> <storyId> <title...>
@@ -442,9 +442,10 @@ async function cmdNew(args) {
   const [storyVal, args5] = extractFlag(args4, '--story');
   const [idVal, args6] = extractFlag(args5, '--id');
   const [createdVal, args7] = extractFlag(args6, '--created'); // ISO 8601, for historical imports
-  const [projectId, ...titleParts] = args7;
+  const [assigneeVal, args8] = extractFlag(args7, '--assignee');
+  const [projectId, ...titleParts] = args8;
   if (!projectId || titleParts.length === 0) {
-    die('Usage: new <projectId> <title...> [--priority p] [--desc d] [--status s] [--story id] [--id id] [--created ISO]');
+    die('Usage: new <projectId> <title...> [--priority p] [--desc d] [--status s] [--story id] [--id id] [--created ISO] [--assignee agentId]');
   }
   const payload = {
     title: titleParts.join(' '),
@@ -455,6 +456,7 @@ async function cmdNew(args) {
   if (storyVal) payload.story_id = storyVal;
   if (idVal) payload.id = idVal;
   if (createdVal) { payload.created_at = createdVal; payload.updated_at = createdVal; }
+  if (assigneeVal) payload.assignee_id = assigneeVal;
   const data = await apiFetch(`/projects/${projectId}/tasks`, {
     method: 'POST',
     headers: authHeaders({ 'Content-Type': 'application/json' }),
