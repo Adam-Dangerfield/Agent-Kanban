@@ -27,9 +27,18 @@ client → reverse proxy (TLS) → nginx (static + /api proxy) → Express API �
 | `PORT` | api | API listen port (default `4000`). |
 | `UPLOAD_DIR` | api | Local attachment dir (default `/data/uploads`) when not using S3. |
 | `S3_BUCKET` (+ AWS region/creds) | api | If set, attachments use S3 with presigned downloads instead of local disk. |
+| `TOKEN_CACHE_TTL_MS` | api | How long a verified agent token is cached so repeat calls skip bcrypt (default `60000`). Cleared on token rotation / agent change, so this is only a staleness window across **multiple** API instances. |
+| `TOKEN_CACHE_MAX` | api | Max distinct tokens held in the verify cache before a full flush (default `5000`). |
+| `PG_POOL_MAX` | api | Max PostgreSQL connections in the pool (default `10`). Keep below the server's `max_connections`. |
+| `PG_CONNECT_TIMEOUT_MS` | api | Fail a connection acquire after this long instead of hanging (default `5000`). Under a burst past pool capacity, excess requests shed with a clean 500 rather than piling up. |
+| `PG_IDLE_TIMEOUT_MS` | api | Idle pooled connections are closed after this long (default `30000`). |
 
 Copy `server/.env.example` to `server/.env` and fill it in; never commit real
 secrets (`.env` is gitignored).
+
+> **Bulk task creation** has a fixed cap of **500 tasks per request**
+> (`POST /api/projects/:id/tasks/bulk`); chunk larger imports. The bundled
+> `kanban` skill's `bulk` verb auto-chunks for you.
 
 ## First deploy
 
