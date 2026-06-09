@@ -8,6 +8,44 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 _Nothing yet._
 
+## [1.1.0] — 2026-06-09
+
+### Added
+- **Non-destructive schema migrations** — a migration runner
+  (`server/scripts/migrate.js`) applies the baseline then any pending
+  `server/db/migrations/*.sql` on startup, tracked in `schema_migrations`
+  (idempotent, advisory-locked). Updating is now rebuild + restart with no data
+  loss; ship a schema change as a new numbered migration.
+- **Bulk task creation** — `POST /api/projects/:id/tasks/bulk` inserts up to 500
+  tasks in a single transaction. Each row is `SAVEPOINT`-isolated (one bad row is
+  reported, not fatal) and idempotent on an explicit `id` (existing ids are
+  skipped), so interrupted imports re-run safely. Returns `{created, skipped,
+  errors}`.
+- **`kanban bulk` skill verb** — bulk-create tasks from a JSON file or stdin
+  (auto-chunks at 500); plus a `--assignee` flag on `kanban new` so CLI-created
+  tasks can be owned at creation.
+- **Tuning env vars** — `TOKEN_CACHE_TTL_MS`, `TOKEN_CACHE_MAX`, `PG_POOL_MAX`,
+  `PG_CONNECT_TIMEOUT_MS`, `PG_IDLE_TIMEOUT_MS` (all optional, safe defaults).
+
+### Changed
+- **Board UI** — the nameplate menu now expands upward, display settings have
+  their own cog, and per-project open-task counts update live (not only for the
+  selected project; `GET /api/projects` now returns `open_task_count`).
+- **Bulk-insert throughput** — authenticated requests now cache verified agent
+  tokens for a short TTL so repeat callers skip the per-request bcrypt that was
+  saturating the event loop; the PostgreSQL pool is tuned with bounded
+  size/timeouts and an error handler; and task creation is a single transaction
+  that returns the row directly instead of re-hydrating it.
+- **Agent-identity guidance** — distinctly-named per-agent tokens
+  (`KANBAN_TOKEN_<NAME>` when several agents share one environment) and
+  per-session local-memory identity are now first-class rules in the agent guide,
+  the skill, and the design notes.
+
+### Fixed
+- **Login** — pressing Enter (or relying on browser autofill) could submit an
+  empty password because the controlled input value lagged React state; the form
+  now reads the live input value, so Enter and autofill log in reliably.
+
 ## [1.0.0] — 2026-06-07
 
 First public release.
@@ -42,5 +80,6 @@ First public release.
   full API for AI agents.
 - **Docker Compose stack** — nginx (static) + Express API + PostgreSQL.
 
-[Unreleased]: https://github.com/your-org/kanban/compare/v1.0.0...HEAD
-[1.0.0]: https://github.com/your-org/kanban/releases/tag/v1.0.0
+[Unreleased]: https://github.com/Adam-Dangerfield/Agent-Kanban/compare/v1.1.0...HEAD
+[1.1.0]: https://github.com/Adam-Dangerfield/Agent-Kanban/compare/v1.0.0...v1.1.0
+[1.0.0]: https://github.com/Adam-Dangerfield/Agent-Kanban/releases/tag/v1.0.0
