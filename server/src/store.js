@@ -195,9 +195,13 @@ class MemoryStore {
 
   nextTaskId(projectId) {
     const key = this.project(projectId).key;
+    // Only count ids matching the generated `<KEY>-<digits>` pattern, so an
+    // imported/hierarchical id (e.g. `BUG-INFRA-12`) is ignored rather than
+    // mis-parsed. (Mirrors PgStore._nextTaskIdOnClient.)
+    const re = new RegExp(`^${key}-(\\d+)$`);
     const suffixes = this.tasks
       .filter((t) => this.projectOfTask(t) === projectId)
-      .map((t) => parseInt(String(t.id).split('-')[1], 10))
+      .map((t) => { const m = String(t.id).match(re); return m ? parseInt(m[1], 10) : NaN; })
       .filter((n) => !Number.isNaN(n));
     const max = suffixes.length ? Math.max(...suffixes) : 899;
     return `${key}-${Math.max(900, max + 1)}`;
@@ -758,10 +762,18 @@ class PgStore {
     );
     if (!projRes.rows[0]) throw new Error(`unknown project: ${projectId}`);
     const key = projRes.rows[0].key;
+    // Only consider ids that match the generated `<KEY>-<digits>` pattern. An
+    // imported/hierarchical id (e.g. `CMDB-INFRA-12`) would otherwise make
+    // `CAST(SPLIT_PART(id,'-',2) AS INTEGER)` throw and 500 the whole create.
+    // The regex filter keeps the cast operating only on the auto-numbered ids;
+    // substring captures the numeric suffix directly. (key matches ^[A-Z0-9]+$,
+    // so it carries no regex metacharacters.)
     const maxRes = await q.query(
-      `SELECT COALESCE(MAX(CAST(SPLIT_PART(id, '-', 2) AS INTEGER)), 899) AS mx
-         FROM tasks WHERE project_id = $1`,
-      [projectId]
+      `SELECT COALESCE(MAX(substring(id from '^' || $2 || '-([0-9]+)$')::int), 899) AS mx
+         FROM tasks
+        WHERE project_id = $1
+          AND id ~ ('^' || $2 || '-[0-9]+$')`,
+      [projectId, key]
     );
     const mx = parseInt(maxRes.rows[0].mx, 10);
     return `${key}-${Math.max(900, mx + 1)}`;
@@ -872,9 +884,15 @@ class PgStore {
               const pj = await client.query(`SELECT key FROM projects WHERE id = $1`, [projectId]);
               if (!pj.rows[0]) throw new Error(`unknown project: ${projectId}`);
               genKey = pj.rows[0].key;
+              // Same robust pattern as _nextTaskIdOnClient: only the generated
+              // `<KEY>-<digits>` ids feed the cast, so a hierarchical id in the
+              // project can't 500 the batch.
               const mx = await client.query(
-                `SELECT COALESCE(MAX(CAST(SPLIT_PART(id, '-', 2) AS INTEGER)), 899) AS mx
-                   FROM tasks WHERE project_id = $1`, [projectId]
+                `SELECT COALESCE(MAX(substring(id from '^' || $2 || '-([0-9]+)$')::int), 899) AS mx
+                   FROM tasks
+                  WHERE project_id = $1
+                    AND id ~ ('^' || $2 || '-[0-9]+$')`,
+                [projectId, genKey]
               );
               genNum = Math.max(900, parseInt(mx.rows[0].mx, 10) + 1);
             }

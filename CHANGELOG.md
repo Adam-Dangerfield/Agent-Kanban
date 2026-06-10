@@ -8,6 +8,19 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 _Nothing yet._
 
+## [1.1.1] — 2026-06-10
+
+### Fixed
+- **Auto-generated task ids 500'd in projects with imported ids** — creating a
+  task without an explicit id (`POST /api/projects/:id/tasks`, and the bulk
+  endpoint's id-less rows) returned HTTP 500 in any project that already held a
+  task whose id didn't match the generated `<KEY>-<number>` shape (e.g. an
+  imported hierarchical id like `CMDB-INFRA-12`). The next-id query cast the
+  second id segment to an integer across **all** rows, so one non-numeric
+  segment threw. It now considers only ids matching `<KEY>-<digits>`, ignoring
+  imported/hierarchical ids for numbering instead of crashing. (`MemoryStore`
+  numbering aligned to the same rule.)
+
 ## [1.1.0] — 2026-06-09
 
 ### Added
@@ -80,6 +93,7 @@ First public release.
   full API for AI agents.
 - **Docker Compose stack** — nginx (static) + Express API + PostgreSQL.
 
-[Unreleased]: https://github.com/Adam-Dangerfield/Agent-Kanban/compare/v1.1.0...HEAD
+[Unreleased]: https://github.com/Adam-Dangerfield/Agent-Kanban/compare/v1.1.1...HEAD
+[1.1.1]: https://github.com/Adam-Dangerfield/Agent-Kanban/compare/v1.1.0...v1.1.1
 [1.1.0]: https://github.com/Adam-Dangerfield/Agent-Kanban/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/Adam-Dangerfield/Agent-Kanban/releases/tag/v1.0.0
