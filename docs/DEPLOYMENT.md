@@ -32,6 +32,9 @@ client → reverse proxy (TLS) → nginx (static + /api proxy) → Express API �
 | `PG_POOL_MAX` | api | Max PostgreSQL connections in the pool (default `10`). Keep below the server's `max_connections`. |
 | `PG_CONNECT_TIMEOUT_MS` | api | Fail a connection acquire after this long instead of hanging (default `5000`). Under a burst past pool capacity, excess requests shed with a clean 500 rather than piling up. |
 | `PG_IDLE_TIMEOUT_MS` | api | Idle pooled connections are closed after this long (default `30000`). |
+| `WEBAUTHN_RP_ID` | api | Passkey relying-party id — the registrable domain, no scheme (default: host of `WEB_ORIGIN`). |
+| `WEBAUTHN_ORIGIN` | api | Exact origin the browser is on for passkey ceremonies (default `WEB_ORIGIN`). Must be HTTPS in production (localhost is exempt). |
+| `WEBAUTHN_RP_NAME` | api | Human-readable relying-party name shown in the passkey prompt (default `Kanban`). |
 
 Copy `server/.env.example` to `server/.env` and fill it in; never commit real
 secrets (`.env` is gitignored).

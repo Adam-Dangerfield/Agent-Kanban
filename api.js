@@ -359,6 +359,40 @@
   }
 
   /* ----------------------------------------------------------
+     Account — password change + passkeys (WebAuthn)
+     These pass through snake_case bodies directly (no field map).
+  ---------------------------------------------------------- */
+
+  async function changePassword(current, next) {
+    return request("POST", "/me/password", { current_password: current, new_password: next });
+  }
+
+  // Enrol a passkey for the signed-in account. Requires SimpleWebAuthnBrowser
+  // (loaded from CDN in Kanban.html). Returns the created credential summary.
+  async function registerPasskey(label) {
+    var start = await request("POST", "/webauthn/register/options");
+    var attResp = await window.SimpleWebAuthnBrowser.startRegistration({ optionsJSON: start.options });
+    return request("POST", "/webauthn/register/verify", { flow: start.flow, response: attResp, label: label });
+  }
+
+  // Passwordless sign-in with a passkey. Sets the token on success.
+  async function loginPasskey() {
+    var start = await request("POST", "/webauthn/authenticate/options");
+    var asResp = await window.SimpleWebAuthnBrowser.startAuthentication({ optionsJSON: start.options });
+    var data = await request("POST", "/webauthn/authenticate/verify", { flow: start.flow, response: asResp });
+    if (data && data.token) setToken(data.token);
+    return data;
+  }
+
+  async function listPasskeys() {
+    return request("GET", "/webauthn/credentials");
+  }
+
+  async function deletePasskey(id) {
+    await request("DELETE", "/webauthn/credentials/" + encodeURIComponent(id));
+  }
+
+  /* ----------------------------------------------------------
      /me — current actor identity + permissions
   ---------------------------------------------------------- */
 
@@ -639,6 +673,13 @@
     // Auth
     login:         login,
     loginToken:    loginToken,
+    loginPasskey:  loginPasskey,
+
+    // Account (password + passkeys)
+    changePassword: changePassword,
+    registerPasskey: registerPasskey,
+    listPasskeys:    listPasskeys,
+    deletePasskey:   deletePasskey,
 
     // Identity
     me:            me,

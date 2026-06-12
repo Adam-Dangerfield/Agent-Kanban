@@ -22,6 +22,27 @@ function Login({ onAuth }) {
   const pwRef = useRef(null);
   const tokenRef = useRef(null);
 
+  // Shared post-auth hydration: given a { actor, token } response, build the
+  // avatar shape, fetch permissions, and hand off to the app shell.
+  const finishAuth = async (data, viaToken) => {
+    var agents = [];
+    try { agents = await window.API.getAgents(); } catch (_) {}
+    var actorAgent = agents.find(function (a) { return a.id === data.actor.id; });
+    if (!actorAgent) {
+      actorAgent = {
+        id: data.actor.id,
+        name: data.actor.name,
+        role: data.actor.role,
+        kind: "human",
+        color: "#D97757",
+        initials: (data.actor.name || "?").slice(0, 2).toUpperCase(),
+      };
+    }
+    var meData = null;
+    try { meData = await window.API.me(); } catch (_) {}
+    onAuth({ as: actorAgent, viaToken: viaToken, agents: agents, me: meData });
+  };
+
   const submit = async (e) => {
     if (e) e.preventDefault();
     setErr("");
@@ -39,28 +60,25 @@ function Login({ onAuth }) {
         if (!tokenVal) { setErr("Enter your agent token"); setLoading(false); return; }
         data = await window.API.loginToken(tokenVal);
       }
-      // data: { ok, actor: {id, name, role}, token }
-      // Fetch agents list to hydrate color/initials for the avatar
-      var agents = [];
-      try { agents = await window.API.getAgents(); } catch (_) {}
-      var actorAgent = agents.find(function (a) { return a.id === data.actor.id; });
-      if (!actorAgent) {
-        // Build a minimal agent shape from the auth response
-        actorAgent = {
-          id: data.actor.id,
-          name: data.actor.name,
-          role: data.actor.role,
-          kind: "human",
-          color: "#D97757",
-          initials: (data.actor.name || "?").slice(0, 2).toUpperCase(),
-        };
-      }
-      // Fetch /me to get isAdmin + permissions
-      var meData = null;
-      try { meData = await window.API.me(); } catch (_) {}
-      onAuth({ as: actorAgent, viaToken: mode === "agent", agents: agents, me: meData });
+      await finishAuth(data, mode === "agent");
     } catch (ex) {
       setErr(ex.message || "Authentication failed");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const passkeyAvailable = typeof window.PublicKeyCredential !== "undefined" && !!window.SimpleWebAuthnBrowser;
+
+  const passkeyLogin = async () => {
+    setErr("");
+    setLoading(true);
+    try {
+      const data = await window.API.loginPasskey();
+      await finishAuth(data, false);
+    } catch (ex) {
+      const t = (ex && ex.name === "NotAllowedError") ? "Passkey sign-in was cancelled." : (ex.message || "Passkey sign-in failed");
+      setErr(t);
     } finally {
       setLoading(false);
     }
@@ -102,6 +120,14 @@ function Login({ onAuth }) {
           <button className="btn btn--primary btn--block" type="submit" disabled={loading}>
             {loading ? "…" : (mode === "manager" ? "Sign in" : "Authenticate")}
           </button>
+          {mode === "manager" && passkeyAvailable && (
+            <>
+              <div className="login__or"><span>or</span></div>
+              <button type="button" className="btn btn--ghost btn--block" onClick={passkeyLogin} disabled={loading}>
+                <Icon name="key" size={15} /> Sign in with a passkey
+              </button>
+            </>
+          )}
         </form>
         <div className="login__foot">Agents usually hit the API directly — this UI is mainly for the manager.</div>
       </div>
@@ -150,6 +176,7 @@ function App() {
 
   // --- Admin panel visibility ---
   const [showAdmin, setShowAdmin] = useState(false);
+  const [showAccount, setShowAccount] = useState(false);
 
   // --- First-run onboarding + project creation ---
   const [firstRun, setFirstRun] = useState(null);   // null | 'active' | 'done'
@@ -716,6 +743,11 @@ function App() {
               </button>
             }>
               <div className="menu__head">Signed in as {auth.as.name}</div>
+              {!auth.viaToken && (
+                <button className="menu__item" onClick={() => { setShowAccount(true); }}>
+                  <Icon name="user" size={15} /> Account
+                </button>
+              )}
               {isAdmin && (
                 <button className="menu__item" onClick={() => { setShowAdmin(true); }}>
                   <Icon name="sliders" size={15} /> Admin panel
@@ -843,6 +875,9 @@ function App() {
           onClose={() => setShowAdmin(false)}
         />
       )}
+
+      {/* Account (password + passkeys) */}
+      {showAccount && <AccountModal onClose={() => setShowAccount(false)} />}
 
       {/* Tweaks */}
       <TweaksPanel>

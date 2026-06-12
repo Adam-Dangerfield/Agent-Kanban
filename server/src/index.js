@@ -18,6 +18,10 @@ const jwt     = require('jsonwebtoken');
 const bcrypt  = require('bcryptjs');
 const crypto  = require('crypto');
 const multer  = require('multer');
+const {
+  generateRegistrationOptions, verifyRegistrationResponse,
+  generateAuthenticationOptions, verifyAuthenticationResponse,
+} = require('@simplewebauthn/server');
 const { store }   = require('./store');
 const { storage } = require('./storage');
 
@@ -52,6 +56,21 @@ const authLimiter = rateLimit({
 const JWT_SECRET      = process.env.JWT_SECRET || 'dev-insecure-secret';
 const USE_PG          = !!process.env.DATABASE_URL;
 const PROVISION_TOKEN = process.env.PROVISION_TOKEN || '';
+
+// ---- WebAuthn / passkey config ------------------------------
+// The relying-party origin/id must match the site the browser is on. Default
+// from WEB_ORIGIN (e.g. https://board.example.com); override if the API is
+// reached from a different origin. rpID is the registrable domain (no scheme).
+const RP_ORIGIN = process.env.WEBAUTHN_ORIGIN || allowedOrigin;
+let RP_ID;
+try { RP_ID = process.env.WEBAUTHN_RP_ID || new URL(RP_ORIGIN).hostname; }
+catch (_) { RP_ID = 'localhost'; }
+const RP_NAME = process.env.WEBAUTHN_RP_NAME || 'Kanban';
+
+// Sign a 7-day manager JWT for an agent id (shared by password + passkey login).
+function signSession(agent) {
+  return jwt.sign({ sub: agent.id, role: agent.role }, JWT_SECRET, { expiresIn: '7d' });
+}
 
 // ---- multer (memory; 20 MB cap) -----------------------------
 const upload = multer({
@@ -247,15 +266,10 @@ app.post('/api/auth/login', authLimiter, async (req, res) => {
     }
     if (!valid) return res.status(401).json({ ok: false, error: 'invalid credentials' });
 
-    const token = jwt.sign(
-      { sub: manager.id, role: manager.role },
-      JWT_SECRET,
-      { expiresIn: '7d' }
-    );
     return res.json({
       ok: true,
       actor: { id: manager.id, name: manager.name, role: manager.role },
-      token,
+      token: signSession(manager),
     });
   } catch (e) {
     console.error('POST /api/auth/login', e);
@@ -292,6 +306,73 @@ app.post('/api/auth/token', authLimiter, async (req, res) => {
   }
 });
 
+// ---- WebAuthn passwordless sign-in (OPEN) -------------------
+// The challenge is carried in a short-lived signed flow token rather than
+// server state, so the two-step ceremony survives restarts and multiple
+// instances. The browser does navigator.credentials.get() between the calls.
+
+// POST /api/webauthn/authenticate/options -> { options, flow }
+app.post('/api/webauthn/authenticate/options', authLimiter, async (req, res) => {
+  try {
+    const options = await generateAuthenticationOptions({
+      rpID: RP_ID,
+      userVerification: 'preferred',
+      // Empty allowCredentials => rely on discoverable (resident) passkeys, so
+      // the user picks an account in the browser UI without typing a username.
+    });
+    const flow = jwt.sign({ ch: options.challenge, typ: 'wa-auth' }, JWT_SECRET, { expiresIn: '5m' });
+    return res.json({ options, flow });
+  } catch (e) {
+    console.error('POST /api/webauthn/authenticate/options', e);
+    return res.status(500).json({ error: 'internal error' });
+  }
+});
+
+// POST /api/webauthn/authenticate/verify { flow, response } -> { ok, actor, token }
+app.post('/api/webauthn/authenticate/verify', authLimiter, async (req, res) => {
+  try {
+    const { flow, response } = req.body || {};
+    if (!flow || !response) return res.status(400).json({ error: 'flow and response required' });
+
+    let expectedChallenge;
+    try {
+      const decoded = jwt.verify(flow, JWT_SECRET);
+      if (decoded.typ !== 'wa-auth') throw new Error('wrong flow');
+      expectedChallenge = decoded.ch;
+    } catch (_) { return res.status(400).json({ error: 'expired or invalid flow' }); }
+
+    const cred = await store.webauthnCredentialById(response.id);
+    if (!cred) return res.status(401).json({ error: 'unknown passkey' });
+
+    const verification = await verifyAuthenticationResponse({
+      response,
+      expectedChallenge,
+      expectedOrigin: RP_ORIGIN,
+      expectedRPID: RP_ID,
+      credential: {
+        id: cred.id,
+        publicKey: new Uint8Array(Buffer.from(cred.public_key, 'base64url')),
+        counter: cred.counter,
+        transports: cred.transports || undefined,
+      },
+    });
+    if (!verification.verified) return res.status(401).json({ error: 'passkey verification failed' });
+
+    await store.updateWebauthnCounter(cred.id, verification.authenticationInfo.newCounter);
+    const agent = await store.agent(cred.agent_id);
+    if (!agent) return res.status(401).json({ error: 'account no longer exists' });
+
+    return res.json({
+      ok: true,
+      actor: { id: agent.id, name: agent.name, role: agent.role },
+      token: signSession(agent),
+    });
+  } catch (e) {
+    console.error('POST /api/webauthn/authenticate/verify', e);
+    return res.status(500).json({ error: 'internal error' });
+  }
+});
+
 // ============================================================
 //  Apply auth middleware to ALL routes after this point.
 //  (Open routes are declared above.)
@@ -316,6 +397,137 @@ app.get('/api/me', async (req, res) => {
     });
   } catch (e) {
     console.error('GET /api/me', e);
+    return res.status(500).json({ error: 'internal error' });
+  }
+});
+
+// POST /api/me/password { current_password, new_password } — change own password.
+// Only meaningful for accounts that have a password (humans); agents use tokens.
+app.post('/api/me/password', async (req, res) => {
+  try {
+    if (!req.actor) return res.status(401).json({ error: 'unauthorized' });
+    const { current_password, new_password } = req.body || {};
+    if (!current_password || !new_password) {
+      return res.status(400).json({ error: 'current_password and new_password required' });
+    }
+    if (String(new_password).length < 8) {
+      return res.status(400).json({ error: 'new password must be at least 8 characters' });
+    }
+    const agent = await store.agent(req.actor);
+    if (!agent) return res.status(404).json({ error: 'not found' });
+
+    // Verify the current password against the stored credential.
+    let ok = false;
+    if (USE_PG) {
+      if (!agent.password_hash) return res.status(400).json({ error: 'this account has no password to change' });
+      ok = await bcrypt.compare(current_password, agent.password_hash);
+    } else {
+      if (agent.password === undefined || agent.password === null) {
+        return res.status(400).json({ error: 'this account has no password to change' });
+      }
+      ok = (current_password === agent.password);
+    }
+    if (!ok) return res.status(403).json({ error: 'current password is incorrect' });
+
+    await store.setAgentPassword(req.actor, String(new_password));
+    return res.json({ ok: true });
+  } catch (e) {
+    console.error('POST /api/me/password', e);
+    return res.status(500).json({ error: 'internal error' });
+  }
+});
+
+// ============================================================
+//  WEBAUTHN / PASSKEYS (enrol + manage; sign-in is open, above)
+// ============================================================
+
+// POST /api/webauthn/register/options -> { options, flow }
+app.post('/api/webauthn/register/options', async (req, res) => {
+  try {
+    if (!req.actor) return res.status(401).json({ error: 'unauthorized' });
+    const agent = await store.agent(req.actor);
+    if (!agent) return res.status(404).json({ error: 'not found' });
+
+    const existing = await store.webauthnCredentialsForAgent(req.actor);
+    const options = await generateRegistrationOptions({
+      rpName: RP_NAME,
+      rpID: RP_ID,
+      userID: new TextEncoder().encode(agent.id),
+      userName: agent.id,
+      userDisplayName: agent.name || agent.id,
+      attestationType: 'none',
+      // Discoverable credential so the user can sign in without typing a username.
+      authenticatorSelection: { residentKey: 'preferred', userVerification: 'preferred' },
+      excludeCredentials: existing.map((c) => ({ id: c.id, transports: c.transports || undefined })),
+    });
+    const flow = jwt.sign({ sub: agent.id, ch: options.challenge, typ: 'wa-reg' }, JWT_SECRET, { expiresIn: '5m' });
+    return res.json({ options, flow });
+  } catch (e) {
+    console.error('POST /api/webauthn/register/options', e);
+    return res.status(500).json({ error: 'internal error' });
+  }
+});
+
+// POST /api/webauthn/register/verify { flow, response, label? } -> { ok, credential }
+app.post('/api/webauthn/register/verify', async (req, res) => {
+  try {
+    if (!req.actor) return res.status(401).json({ error: 'unauthorized' });
+    const { flow, response, label } = req.body || {};
+    if (!flow || !response) return res.status(400).json({ error: 'flow and response required' });
+
+    let expectedChallenge;
+    try {
+      const decoded = jwt.verify(flow, JWT_SECRET);
+      if (decoded.typ !== 'wa-reg' || decoded.sub !== req.actor) throw new Error('wrong flow');
+      expectedChallenge = decoded.ch;
+    } catch (_) { return res.status(400).json({ error: 'expired or invalid flow' }); }
+
+    const verification = await verifyRegistrationResponse({
+      response,
+      expectedChallenge,
+      expectedOrigin: RP_ORIGIN,
+      expectedRPID: RP_ID,
+      requireUserVerification: false,
+    });
+    if (!verification.verified || !verification.registrationInfo) {
+      return res.status(400).json({ error: 'passkey registration failed' });
+    }
+    const { credential } = verification.registrationInfo;
+    await store.addWebauthnCredential({
+      id: credential.id,
+      agent_id: req.actor,
+      public_key: Buffer.from(credential.publicKey).toString('base64url'),
+      counter: credential.counter || 0,
+      transports: credential.transports || (response.response && response.response.transports) || null,
+      device_label: (label && String(label).slice(0, 60)) || null,
+    });
+    return res.status(201).json({ ok: true, credential: { id: credential.id } });
+  } catch (e) {
+    console.error('POST /api/webauthn/register/verify', e);
+    return res.status(500).json({ error: 'internal error' });
+  }
+});
+
+// GET /api/webauthn/credentials -> [{ id, device_label, created_at, last_used_at, transports }]
+app.get('/api/webauthn/credentials', async (req, res) => {
+  try {
+    if (!req.actor) return res.status(401).json({ error: 'unauthorized' });
+    return res.json(await store.webauthnCredentialsForAgent(req.actor));
+  } catch (e) {
+    console.error('GET /api/webauthn/credentials', e);
+    return res.status(500).json({ error: 'internal error' });
+  }
+});
+
+// DELETE /api/webauthn/credentials/:id -> 204 (only your own)
+app.delete('/api/webauthn/credentials/:id', async (req, res) => {
+  try {
+    if (!req.actor) return res.status(401).json({ error: 'unauthorized' });
+    const ok = await store.deleteWebauthnCredential(req.params.id, req.actor);
+    if (!ok) return res.status(404).json({ error: 'not found' });
+    return res.status(204).end();
+  } catch (e) {
+    console.error('DELETE /api/webauthn/credentials/:id', e);
     return res.status(500).json({ error: 'internal error' });
   }
 });

@@ -191,9 +191,22 @@ require `X-Provision-Token: <value>` as noted.
 POST   /api/auth/login            { password }          -> { ok, actor:{id,name,role}, token:<JWT> }
 POST   /api/auth/token            { token }             -> { ok, actor:{id,name,role}, token:<raw> }
 
+# ---- Passkey sign-in (open; WebAuthn) ----------------------------------
+POST   /api/webauthn/authenticate/options               -> { options, flow }   [open]
+POST   /api/webauthn/authenticate/verify  { flow, response }
+                                                        -> { ok, actor, token:<JWT> } [open]
+
 # ---- Identity ----------------------------------------------------------
 GET    /api/me                                          -> { id, name, role, is_admin,
                                                             permissions:[{project_id,access}] }
+POST   /api/me/password  { current_password, new_password }  -> { ok }   [bearer; verifies current]
+
+# ---- Passkeys (enrol + manage; bearer) ---------------------------------
+POST   /api/webauthn/register/options                   -> { options, flow }
+POST   /api/webauthn/register/verify  { flow, response, label? }  -> 201 { ok, credential:{id} }
+GET    /api/webauthn/credentials                        -> [{ id, device_label, created_at,
+                                                            last_used_at, transports }]
+DELETE /api/webauthn/credentials/:id                    -> 204   (only your own)
 
 # ---- Agents ------------------------------------------------------------
 GET    /api/agents                                      -> [Agent]            (no secrets)

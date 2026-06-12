@@ -37,6 +37,7 @@ class MemoryStore {
     this._attachments     = [];
     this._attachId        = 1;
     this._provisionTokens = [];
+    this._webauthn        = [];   // passkey credentials
     this._provisionId     = 1;
   }
 
@@ -68,6 +69,42 @@ class MemoryStore {
     a.token        = rawToken;            // memory mode compares the raw token
     a.token_prefix = rawToken.slice(0, 13);
     return a;
+  }
+
+  setAgentPassword(id, rawPassword) {
+    const a = this.agents.find((x) => x.id === id);
+    if (!a) return false;
+    a.password = rawPassword;             // memory mode compares the raw password
+    return true;
+  }
+
+  // ---- WebAuthn / passkeys ----
+  addWebauthnCredential(c) {
+    this._webauthn.push({
+      id: c.id, agent_id: c.agent_id, public_key: c.public_key,
+      counter: c.counter || 0, transports: c.transports || null,
+      device_label: c.device_label || null,
+      created_at: new Date().toISOString(), last_used_at: null,
+    });
+    return true;
+  }
+  webauthnCredentialsForAgent(agentId) {
+    return this._webauthn.filter((c) => c.agent_id === agentId)
+      .map(({ public_key: _pk, counter: _ct, ...pub }) => pub);
+  }
+  webauthnCredentialById(id) {
+    return this._webauthn.find((c) => c.id === id) || null;
+  }
+  updateWebauthnCounter(id, counter) {
+    const c = this._webauthn.find((x) => x.id === id);
+    if (!c) return false;
+    c.counter = counter; c.last_used_at = new Date().toISOString();
+    return true;
+  }
+  deleteWebauthnCredential(id, agentId) {
+    const before = this._webauthn.length;
+    this._webauthn = this._webauthn.filter((c) => !(c.id === id && c.agent_id === agentId));
+    return this._webauthn.length < before;
   }
 
   updateAgent(id, fields) {
@@ -556,6 +593,57 @@ class PgStore {
       [hash, rawToken.slice(0, 13), id]
     );
     return true;
+  }
+
+  async setAgentPassword(id, rawPassword) {
+    const bcrypt = require('bcryptjs');
+    const hash = await bcrypt.hash(rawPassword, 10);
+    const { rowCount } = await this._q(
+      `UPDATE agents SET password_hash = $1 WHERE id = $2`, [hash, id]
+    );
+    return rowCount > 0;
+  }
+
+  // ---- WebAuthn / passkeys ----
+  async addWebauthnCredential(c) {
+    await this._q(
+      `INSERT INTO webauthn_credentials (id, agent_id, public_key, counter, transports, device_label)
+       VALUES ($1, $2, $3, $4, $5, $6)`,
+      [c.id, c.agent_id, c.public_key, c.counter || 0,
+       c.transports ? JSON.stringify(c.transports) : null, c.device_label || null]
+    );
+    return true;
+  }
+  async webauthnCredentialsForAgent(agentId) {
+    const { rows } = await this._q(
+      `SELECT id, agent_id, transports, device_label, created_at, last_used_at
+         FROM webauthn_credentials WHERE agent_id = $1 ORDER BY created_at`,
+      [agentId]
+    );
+    return rows.map((r) => ({ ...r, transports: r.transports ? JSON.parse(r.transports) : null }));
+  }
+  async webauthnCredentialById(id) {
+    const { rows } = await this._q(
+      `SELECT id, agent_id, public_key, counter, transports, device_label
+         FROM webauthn_credentials WHERE id = $1`,
+      [id]
+    );
+    if (!rows[0]) return null;
+    const r = rows[0];
+    return { ...r, counter: Number(r.counter), transports: r.transports ? JSON.parse(r.transports) : null };
+  }
+  async updateWebauthnCounter(id, counter) {
+    const { rowCount } = await this._q(
+      `UPDATE webauthn_credentials SET counter = $1, last_used_at = now() WHERE id = $2`,
+      [counter, id]
+    );
+    return rowCount > 0;
+  }
+  async deleteWebauthnCredential(id, agentId) {
+    const { rowCount } = await this._q(
+      `DELETE FROM webauthn_credentials WHERE id = $1 AND agent_id = $2`, [id, agentId]
+    );
+    return rowCount > 0;
   }
 
   async updateAgent(id, fields) {

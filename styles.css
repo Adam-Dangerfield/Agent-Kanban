@@ -113,7 +113,10 @@ button { font-family: inherit; cursor: pointer; }
 .side__brand .brandmark { width: 30px; height: 30px; font-size: 16px; border-radius: 8px; }
 .side__brand .brandname { font-size: 15.5px; }
 .side__label { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .06em; color: var(--ink-3); padding: 0 8px 8px; }
-.side__nav { display: flex; flex-direction: column; gap: 2px; }
+/* flex:1 + overflow keeps the brand pinned at top and the user/settings footer
+   pinned at the bottom of the viewport; the project list scrolls between them
+   when there are many projects, so the footer is always reachable. */
+.side__nav { display: flex; flex-direction: column; gap: 2px; flex: 1 1 auto; min-height: 0; overflow-y: auto; }
 .projbtn {
   display: flex; align-items: center; gap: 10px; width: 100%; text-align: left;
   border: none; background: transparent; padding: 8px; border-radius: 8px; transition: .14s; color: var(--ink-2);
@@ -136,7 +139,10 @@ button { font-family: inherit; cursor: pointer; }
 .whoami__role { font-size: 11px; color: var(--ink-3); font-weight: 400; }
 
 /* ---------- Main ---------- */
-.main { display: flex; flex-direction: column; min-width: 0; height: 100%; }
+/* min-height:0 lets .boardwrap's overflow:auto scroll internally instead of
+   growing .main past the viewport (which would scroll the whole page and drag
+   the sidebar footer to the very bottom). */
+.main { display: flex; flex-direction: column; min-width: 0; min-height: 0; height: 100%; }
 .topbar { display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 16px 22px; border-bottom: 1px solid var(--border); }
 .topbar__title { display: flex; align-items: center; gap: 11px; min-width: 0; }
 .topbar__projkey { display: inline-grid; place-items: center; height: 22px; padding: 0 7px; border-radius: 5px; color: #fff; font-size: 11px; font-weight: 700; }
@@ -423,3 +429,23 @@ button { font-family: inherit; cursor: pointer; }
   .projbtn { justify-content: center; }
   .searchbox { width: 180px; }
 }
+
+/* ---------- Login "or" divider + passkey ---------- */
+.login__or { display: flex; align-items: center; gap: 12px; margin: 4px 0; color: var(--ink-3); font-size: 11.5px; }
+.login__or::before, .login__or::after { content: ""; flex: 1; height: 1px; background: var(--border); }
+
+/* ---------- Account modal ---------- */
+.acct__sec { display: flex; flex-direction: column; gap: 12px; }
+.acct__h { margin: 0; font-size: 13px; font-weight: 640; color: var(--ink); }
+.acct__lede { margin: 0; font-size: 12.5px; color: var(--ink-3); }
+.acct__div { height: 1px; background: var(--border); margin: 4px 0; }
+.acct__actions { display: flex; justify-content: flex-end; }
+.acct__ok { color: #2E7D54; font-size: 12.5px; }
+.acct__err { color: #C2453B; font-size: 12.5px; }
+.acct__muted { color: var(--ink-3); font-size: 12.5px; }
+.acct__list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.acct__row { display: flex; align-items: center; gap: 11px; padding: 9px 11px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface-2); }
+.acct__rowicon { display: inline-flex; color: var(--ink-2); }
+.acct__rowmain { flex: 1; min-width: 0; display: flex; flex-direction: column; line-height: 1.3; }
+.acct__rowname { font-size: 13px; font-weight: 560; color: var(--ink); }
+.acct__rowmeta { font-size: 11px; color: var(--ink-3); }

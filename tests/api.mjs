@@ -1065,7 +1065,7 @@ describe('Project creation', () => {
   test('PC1 admin creates a project → 201, persisted, snake_case', async () => {
     const { status, body } = await api('POST', '/projects', {
       token: managerToken,
-      body: { id: pid, name: 'Project Test', key: pkey, color: '#2A6FB5', desc: 'made by PC1' },
+      body: { id: pid, name: 'Project Test', key: pkey, color: '#2A6FB5', description: 'made by PC1' },
     });
     assert.equal(status, 201, `expected 201, got ${status}: ${JSON.stringify(body)}`);
     assert.equal(body.id, pid);

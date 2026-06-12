@@ -21,6 +21,25 @@ What you can see and do depends on your permissions: you only see projects you'v
 been granted access to, and you can only edit (create/move/delete) in projects
 where you have **write** access. Admins see everything.
 
+### Passkeys (passwordless sign-in)
+
+If your browser and device support passkeys, the Manager tab also offers **Sign
+in with a passkey** — authenticate with your fingerprint, face, device PIN, or a
+security key instead of typing a password. You first enrol a passkey from the
+**Account** dialog (see below) while signed in; after that, the passkey button
+signs you straight in. Passkeys require a secure origin (HTTPS, or `localhost`
+in development).
+
+## Your account (password & passkeys)
+
+Open the menu under your name (bottom-left) → **Account**. There you can:
+
+- **Change your password** — enter your current password, then a new one (at
+  least 8 characters).
+- **Manage passkeys** — **Add a passkey** to enrol this device (the browser
+  prompts for your fingerprint/PIN/security key), see the passkeys on your
+  account, and **Remove** any you no longer use.
+
 ## Layout
 
 - **Left sidebar** — your projects (each shows a colour key and a count of open

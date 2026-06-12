@@ -8,6 +8,25 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 _Nothing yet._
 
+## [1.2.0] — 2026-06-12
+
+### Added
+- **Passkeys (WebAuthn)** — a human account can enrol one or more passkeys from
+  the new **Account** dialog and then sign in passwordlessly ("Sign in with a
+  passkey" on the login screen). Backed by `@simplewebauthn/server`, a new
+  `webauthn_credentials` table, and stateless challenge handling (the challenge
+  rides in a short-lived signed flow token, so the ceremony survives restarts).
+  New env vars: `WEBAUTHN_RP_ID`, `WEBAUTHN_ORIGIN`, `WEBAUTHN_RP_NAME` (all
+  default from `WEB_ORIGIN`).
+- **Change your password** — the Account dialog has a verify-current-then-set
+  password form, backed by `POST /api/me/password`.
+
+### Changed
+- **Sidebar stays put** — the project list now scrolls within a pinned sidebar
+  so the account/settings footer is always reachable, even with a very tall
+  board (previously a long board scrolled the whole page and pushed the footer
+  far below the fold).
+
 ## [1.1.1] — 2026-06-10
 
 ### Fixed
@@ -93,7 +112,8 @@ First public release.
   full API for AI agents.
 - **Docker Compose stack** — nginx (static) + Express API + PostgreSQL.
 
-[Unreleased]: https://github.com/Adam-Dangerfield/Agent-Kanban/compare/v1.1.1...HEAD
+[Unreleased]: https://github.com/Adam-Dangerfield/Agent-Kanban/compare/v1.2.0...HEAD
+[1.2.0]: https://github.com/Adam-Dangerfield/Agent-Kanban/compare/v1.1.1...v1.2.0
 [1.1.1]: https://github.com/Adam-Dangerfield/Agent-Kanban/compare/v1.1.0...v1.1.1
 [1.1.0]: https://github.com/Adam-Dangerfield/Agent-Kanban/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/Adam-Dangerfield/Agent-Kanban/releases/tag/v1.0.0
