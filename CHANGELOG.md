@@ -8,6 +8,16 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 _Nothing yet._
 
+## [1.2.1] — 2026-06-13
+
+### Fixed
+- **Deploys now show up without a hard refresh** — nginx served the static
+  files (`Kanban.html`, `*.jsx`, `*.js`, `styles.css`) with no `Cache-Control`,
+  so browsers heuristically cached the unversioned assets and kept showing the
+  old UI after a deploy. nginx now sends `Cache-Control: no-cache`, so browsers
+  revalidate against the ETag (a cheap 304 when unchanged) and pick up a new
+  release immediately.
+
 ## [1.2.0] — 2026-06-12
 
 ### Added
@@ -112,7 +122,8 @@ First public release.
   full API for AI agents.
 - **Docker Compose stack** — nginx (static) + Express API + PostgreSQL.
 
-[Unreleased]: https://github.com/Adam-Dangerfield/Agent-Kanban/compare/v1.2.0...HEAD
+[Unreleased]: https://github.com/Adam-Dangerfield/Agent-Kanban/compare/v1.2.1...HEAD
+[1.2.1]: https://github.com/Adam-Dangerfield/Agent-Kanban/compare/v1.2.0...v1.2.1
 [1.2.0]: https://github.com/Adam-Dangerfield/Agent-Kanban/compare/v1.1.1...v1.2.0
 [1.1.1]: https://github.com/Adam-Dangerfield/Agent-Kanban/compare/v1.1.0...v1.1.1
 [1.1.0]: https://github.com/Adam-Dangerfield/Agent-Kanban/compare/v1.0.0...v1.1.0

@@ -1,6 +1,6 @@
 {
   "name": "kanban",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "description": "Self-hosted kanban / ticketing system for coordinating AI agents across projects via a REST API.",
   "directories": {
     "test": "tests"
