@@ -262,6 +262,7 @@ class MemoryStore {
       branch:          data.branch      || null,
       merge_state:     data.merge_state || 'none',
       from_request_id: data.from_request_id || null,
+      blocked_reason:  data.blocked_reason || null,
       deps:            data.deps || [],
       created_at:      data.created_at || now,
       updated_at:      data.updated_at || data.created_at || now,
@@ -290,9 +291,42 @@ class MemoryStore {
   updateTask(id, patch, actorId, logText) {
     const t = this.tasks.find((x) => x.id === id);
     if (!t) return null;
+    if (patch.deps !== undefined) {
+      const bad = this.wouldCreateCycle(id, patch.deps);
+      if (bad) { const e = new Error(`dependency cycle: ${id} ↔ ${bad}`); e.code = 'CYCLE'; throw e; }
+    }
     Object.assign(t, patch);
     if (logText) this.log('task', id, actorId, logText);
+    if (patch.status === 'done') this._signalUnblocked(id, actorId);
     return this.hydrateTask(t);
+  }
+
+  // Mirror of PgStore.wouldCreateCycle over the in-memory task.deps graph.
+  wouldCreateCycle(id, deps) {
+    const depsOf = (n) => { const tk = this.tasks.find((x) => x.id === n); return (tk && tk.deps) || []; };
+    for (const dep of (deps || [])) {
+      if (dep === id) return dep;
+      const seen = new Set(); const stack = [dep];
+      while (stack.length) {
+        const n = stack.pop();
+        if (n === id) return dep;
+        if (seen.has(n)) continue;
+        seen.add(n);
+        for (const m of depsOf(n)) stack.push(m);
+      }
+    }
+    return null;
+  }
+
+  _signalUnblocked(blockerId, actorId) {
+    for (const t of this.tasks) {
+      if (!(t.deps || []).includes(blockerId)) continue;
+      const stillBlocked = (t.deps || []).some((d) => {
+        const dt = this.tasks.find((x) => x.id === d);
+        return dt && dt.status !== 'done';
+      });
+      if (!stillBlocked) this.log('task', t.id, actorId, `unblocked — ${blockerId} is done`);
+    }
   }
 
   deleteTask(id) {
@@ -813,7 +847,7 @@ class PgStore {
     const { rows } = await this._q(
       `SELECT id, project_id, story_id, title, description, notes,
               status, priority, assignee_id, branch, merge_state,
-              from_request_id, created_at, updated_at
+              from_request_id, blocked_reason, created_at, updated_at
          FROM tasks WHERE project_id = $1 ORDER BY id`,
       [projectId]
     );
@@ -824,7 +858,7 @@ class PgStore {
     const { rows } = await this._q(
       `SELECT id, project_id, story_id, title, description, notes,
               status, priority, assignee_id, branch, merge_state,
-              from_request_id, created_at, updated_at
+              from_request_id, blocked_reason, created_at, updated_at
          FROM tasks WHERE id = $1`,
       [id]
     );
@@ -874,7 +908,7 @@ class PgStore {
   static get _TASK_COLS() {
     return `id, project_id, story_id, title, description, notes,
             status, priority, assignee_id, branch, merge_state, from_request_id,
-            created_at, updated_at`;
+            blocked_reason, created_at, updated_at`;
   }
 
   // Insert one task + its deps + the "created" activity row on a single client
@@ -887,10 +921,10 @@ class PgStore {
       `INSERT INTO tasks
          (id, project_id, story_id, title, description, notes,
           status, priority, assignee_id, branch, merge_state, from_request_id,
-          created_at, updated_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,
-               COALESCE($13::timestamptz, now()),
-               COALESCE($14::timestamptz, $13::timestamptz, now()))
+          blocked_reason, created_at, updated_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,
+               COALESCE($14::timestamptz, now()),
+               COALESCE($15::timestamptz, $14::timestamptz, now()))
        RETURNING ${PgStore._TASK_COLS}`,
       [
         id,
@@ -905,6 +939,7 @@ class PgStore {
         data.branch      || null,
         data.merge_state || 'none',
         data.from_request_id || null,
+        data.blocked_reason || null,
         data.created_at || null,
         data.updated_at || null,
       ]
@@ -1009,8 +1044,16 @@ class PgStore {
     const allowed = [
       'title', 'description', 'notes', 'status', 'priority',
       'assignee_id', 'branch', 'merge_state', 'from_request_id',
-      'story_id', 'project_id',
+      'story_id', 'project_id', 'blocked_reason',
     ];
+
+    // Reject a dependency change that would create a cycle (A→B→…→A) before we
+    // touch anything, so the graph stays acyclic and blockersOf can't loop.
+    if (deps !== undefined) {
+      const bad = await this.wouldCreateCycle(id, deps);
+      if (bad) { const e = new Error(`dependency cycle: ${id} ↔ ${bad}`); e.code = 'CYCLE'; throw e; }
+    }
+
     const setCols = Object.keys(fields).filter((k) => allowed.includes(k));
     if (setCols.length > 0) {
       const setClause = setCols.map((k, i) => `${k} = $${i + 2}`).join(', ');
@@ -1036,7 +1079,48 @@ class PgStore {
     }
 
     if (logText) await this.log('task', id, actorId, logText);
+    // If this update closed the task, anything it was blocking may now be free.
+    if (fields.status === 'done') await this._signalUnblocked(id, actorId);
     return this.task(id);
+  }
+
+  // Does adding edges id→dep (for each dep) create a cycle? Returns the first
+  // offending dep id, or null. A cycle forms iff some new blocker can already
+  // reach `id` by following depends_on edges.
+  async wouldCreateCycle(id, deps) {
+    for (const dep of (deps || [])) {
+      if (dep === id) return dep;
+      const seen = new Set();
+      const stack = [dep];
+      while (stack.length) {
+        const n = stack.pop();
+        if (n === id) return dep;
+        if (seen.has(n)) continue;
+        seen.add(n);
+        const { rows } = await this._q(`SELECT depends_on FROM task_deps WHERE task_id = $1`, [n]);
+        for (const r of rows) stack.push(r.depends_on);
+      }
+    }
+    return null;
+  }
+
+  // When `blockerId` is completed, log an "unblocked" line on each task that was
+  // blocked by it and now has no remaining open (non-done) task-blockers.
+  async _signalUnblocked(blockerId, actorId) {
+    try {
+      const { rows } = await this._q(
+        `SELECT task_id FROM task_deps WHERE depends_on = $1`, [blockerId]
+      );
+      for (const { task_id } of rows) {
+        const open = await this._q(
+          `SELECT 1 FROM task_deps d JOIN tasks t ON t.id = d.depends_on
+            WHERE d.task_id = $1 AND t.status <> 'done' LIMIT 1`, [task_id]
+        );
+        if (open.rowCount === 0) {
+          await this.log('task', task_id, actorId, `unblocked — ${blockerId} is done`);
+        }
+      }
+    } catch (_) { /* never let the unblock signal break the main update */ }
   }
 
   async deleteTask(id) {

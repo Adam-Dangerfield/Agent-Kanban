@@ -921,7 +921,10 @@ app.patch('/api/tasks/:id', async (req, res) => {
     const { _log, ...patch } = req.body;
     const updated = await store.updateTask(req.params.id, patch, req.actor, _log);
     return updated ? res.json(updated) : res.status(404).json({ error: 'not found' });
-  } catch (e) { console.error(e); res.status(500).json({ error: 'internal error' }); }
+  } catch (e) {
+    if (e && e.code === 'CYCLE') return res.status(400).json({ error: e.message });
+    console.error(e); res.status(500).json({ error: 'internal error' });
+  }
 });
 
 app.delete('/api/tasks/:id', async (req, res) => {

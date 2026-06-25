@@ -22,6 +22,7 @@
     ["assignee",      "assignee_id"],
     ["mergeState",    "merge_state"],
     ["fromRequestId", "from_request_id"],
+    ["blockedReason", "blocked_reason"],
     ["createdAt",     "created_at"],
     ["updatedAt",     "updated_at"],
   ];

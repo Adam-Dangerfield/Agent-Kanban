@@ -143,7 +143,76 @@ function AttachmentsSection({ attachments, onUpload, onDelete, canWrite }) {
   );
 }
 
-function DetailPanel({ task, ctx, currentUser, onClose, onPatch, onComment, onOpen, onDelete, onUploadAttachment, onDeleteAttachment, canWrite }) {
+/* ---- Blocked-by editor: list current blockers (remove) + add a blocker ----
+   Adding a blocker that would create a cycle is rejected by the server (400);
+   we surface that inline. onSetDeps(taskId, deps, log) resolves/throws. */
+function BlockedByEditor({ task, ctx, onOpen, onSetDeps, writeOk }) {
+  const [adding, setAdding] = useState(false);
+  const [q, setQ] = useState("");
+  const [err, setErr] = useState("");
+  const [busy, setBusy] = useState(false);
+  const deps = task.deps || [];
+  const blockerTasks = deps.map((id) => ctx.taskById(id) || { id, title: "(unknown)", status: "backlog" });
+
+  const candidates = ctx.allTasks
+    .filter((t) => t.id !== task.id && !deps.includes(t.id))
+    .filter((t) => { const n = q.trim().toLowerCase(); return !n || `${t.id} ${t.title}`.toLowerCase().includes(n); })
+    .slice(0, 8);
+
+  const apply = async (next, log) => {
+    setErr(""); setBusy(true);
+    try { await onSetDeps(task.id, next, log); setAdding(false); setQ(""); }
+    catch (ex) { setErr(ex.message || "Could not update blockers"); }
+    finally { setBusy(false); }
+  };
+
+  return (
+    <div className="deps__group">
+      <span className="deps__lbl">Blocked by</span>
+      {blockerTasks.length ? blockerTasks.map((b) => (
+        <div key={b.id} className={`deprow ${b.status === "done" ? "deprow--done" : "deprow--open"}`}>
+          <Icon name={b.status === "done" ? "check" : "block"} size={13} />
+          <button className="deprow__link" onClick={() => onOpen(b.id)}>
+            <span className="deprow__id">{b.id}</span>
+            <span className="deprow__t">{b.title}</span>
+          </button>
+          <StatusPill status={b.status} />
+          {writeOk && (
+            <button className="deprow__x" title="Remove blocker" disabled={busy}
+              onClick={() => apply(deps.filter((d) => d !== b.id), `removed blocker ${b.id}`)}>
+              <Icon name="x" size={12} />
+            </button>
+          )}
+        </div>
+      )) : <span className="muted deps__none">None</span>}
+      {err && <div className="deps__err">{err}</div>}
+      {writeOk && (adding ? (
+        <div className="deps__add">
+          <input autoFocus className="inlineedit" placeholder="Search ticket id or title…"
+            value={q} onChange={(e) => setQ(e.target.value)}
+            onKeyDown={(e) => { if (e.key === "Escape") { setAdding(false); setQ(""); } }} />
+          <div className="deps__results">
+            {candidates.map((c) => (
+              <button key={c.id} className="deps__result" disabled={busy}
+                onClick={() => apply([...deps, c.id], `blocked by ${c.id}`)}>
+                <span className="deprow__id">{c.id}</span>
+                <span className="deprow__t">{c.title}</span>
+              </button>
+            ))}
+            {candidates.length === 0 && <span className="muted deps__none">No matches</span>}
+          </div>
+          <button className="btn btn--ghost btn--sm" onClick={() => { setAdding(false); setQ(""); }}>Cancel</button>
+        </div>
+      ) : (
+        <button className="deps__addbtn" onClick={() => setAdding(true)}>
+          <Icon name="plus" size={13} /> Add blocker
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function DetailPanel({ task, ctx, currentUser, onClose, onPatch, onSetDeps, onComment, onOpen, onDelete, onUploadAttachment, onDeleteAttachment, canWrite }) {
   if (!task) return null;
   const epic = ctx.epicOf(task);
   const story = ctx.storyOf(task);
@@ -245,16 +314,16 @@ function DetailPanel({ task, ctx, currentUser, onClose, onPatch, onComment, onOp
 
           <Section title="Dependencies" icon="link">
             <div className="deps">
+              <BlockedByEditor task={task} ctx={ctx} onOpen={onOpen} onSetDeps={onSetDeps} writeOk={writeOk} />
               <div className="deps__group">
-                <span className="deps__lbl">Blocked by</span>
-                {blockers.length ? blockers.map((b) => (
-                  <button key={b.id} className={`deprow ${b.status === "done" ? "deprow--done" : "deprow--open"}`} onClick={() => onOpen(b.id)}>
-                    <Icon name={b.status === "done" ? "check" : "block"} size={13} />
-                    <span className="deprow__id">{b.id}</span>
-                    <span className="deprow__t">{b.title}</span>
-                    <StatusPill status={b.status} />
-                  </button>
-                )) : <span className="muted deps__none">None</span>}
+                <span className="deps__lbl">Blocked reason</span>
+                {writeOk ? (
+                  <EditableText value={task.blockedReason || ""} multiline
+                    placeholder="Blocked on something that isn't a ticket? e.g. waiting on vendor (optional)"
+                    onCommit={(v) => onPatch(task.id, { blockedReason: v.trim() || null }, v.trim() ? `blocked: ${v.trim()}` : `cleared blocked reason`)} />
+                ) : (
+                  <div className="inlineview is-empty">{task.blockedReason || <span className="muted">None</span>}</div>
+                )}
               </div>
               <div className="deps__group">
                 <span className="deps__lbl">Blocks</span>

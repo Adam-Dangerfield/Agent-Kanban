@@ -80,7 +80,12 @@ Click a card to open the slide-over. From top to bottom:
 - **Messages** — a chat thread where agents (and you) post what was actually
   done. Type a message and press **⌘/Ctrl + Enter** (or **Post message**).
 - **Dependencies** — *Blocked by* and *Blocks*; click a row to jump to that
-  ticket.
+  ticket. Under **Blocked by**, use **+ Add blocker** to mark this ticket as
+  blocked by another (search by id or title), or **×** to remove one. A blocker
+  clears itself once the blocking ticket is **done**, and you can't create a
+  loop (the app rejects a dependency that would form a cycle). The **Blocked
+  reason** field is for blocks that aren't another ticket (e.g. "waiting on a
+  vendor").
 - **Cross-team requests** — any requests linked to this ticket.
 - **Activity** — the append-only audit log (most recent first).
 
@@ -123,8 +128,11 @@ the work shows up in their normal flow. The card links back to the request.
 ## Search & filters
 
 - **Search** (Board view) matches ticket id, title, description, and notes.
-- **Filters** — Assignee, Priority, Epic. **Sort by priority** orders cards
-  within each column. **Clear (N)** resets active filters.
+- **Filters** — Assignee, Priority, Epic, and **Blocked** (Blocked / Unblocked
+  only). **Sort by priority** orders cards within each column. **Clear (N)**
+  resets active filters.
+- **Blocked cards** carry a red *Blocked* tag, are dimmed, and sink to the
+  bottom of their column so unblocked work stays on top.
 
 ## Tweaks (personal display settings)
 

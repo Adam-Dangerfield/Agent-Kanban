@@ -8,6 +8,25 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 _Nothing yet._
 
+## [1.3.0] — 2026-06-15
+
+### Added
+- **Blocked tickets** — a ticket is *blocked* when it has an unfinished
+  task-blocker or a free-text "blocked reason" (it's a derived overlay, not a
+  status). What's new:
+  - **Manage blockers in the UI** — the ticket detail panel now lets you **add**
+    a blocker (search by id/title) and **remove** one, instead of read-only.
+  - **Blocked reason** — a free-text field for blocks that aren't another
+    ticket (e.g. "waiting on a vendor"), backed by a new `blocked_reason` column.
+  - **Board triage** — blocked cards are visually de-emphasised and sink to the
+    bottom of their column, plus a **Blocked / Unblocked** filter.
+  - **Cycle protection** — adding a dependency that would create a loop
+    (A→B→…→A) is rejected with `400`.
+  - **Auto-unblock signal** — when a blocker is marked `done`, an "unblocked"
+    line is written to the activity feed of anything it was the last blocker for.
+  - **Skill verbs** — `kanban block <id> --on <blockerId> | --reason "…"` and
+    `kanban unblock <id> [--on <blockerId>]`.
+
 ## [1.2.1] — 2026-06-13
 
 ### Fixed
@@ -122,7 +141,8 @@ First public release.
   full API for AI agents.
 - **Docker Compose stack** — nginx (static) + Express API + PostgreSQL.
 
-[Unreleased]: https://github.com/Adam-Dangerfield/Agent-Kanban/compare/v1.2.1...HEAD
+[Unreleased]: https://github.com/Adam-Dangerfield/Agent-Kanban/compare/v1.3.0...HEAD
+[1.3.0]: https://github.com/Adam-Dangerfield/Agent-Kanban/compare/v1.2.1...v1.3.0
 [1.2.1]: https://github.com/Adam-Dangerfield/Agent-Kanban/compare/v1.2.0...v1.2.1
 [1.2.0]: https://github.com/Adam-Dangerfield/Agent-Kanban/compare/v1.1.1...v1.2.0
 [1.1.1]: https://github.com/Adam-Dangerfield/Agent-Kanban/compare/v1.1.0...v1.1.1

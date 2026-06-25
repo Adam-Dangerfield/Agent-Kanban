@@ -187,6 +187,7 @@ function App() {
   const [fAssignee, setFAssignee] = useState(null);
   const [fPriority, setFPriority] = useState(null);
   const [fEpic, setFEpic] = useState(null);
+  const [fBlocked, setFBlocked] = useState(null);   // null=all | 'blocked' | 'unblocked'
   const [openId, setOpenId] = useState(null);
   const [creating, setCreating] = useState(null); // {status} or {mode:'request'} or null
   const [view, setView] = useState("board"); // board | inbox
@@ -365,10 +366,12 @@ function App() {
     const epicOf = (tk) => { const s = storyOf(tk); return s && epics.find((e) => e.id === s.epicId); };
     const agentOf = (id) => agents.find((a) => a.id === id) || null;
     const blockersOf = (tk) => (tk.deps || []).filter((d) => { const dt = taskById(d); return dt && dt.status !== "done"; });
+    // A task is blocked if it has an open task-blocker OR a free-text reason.
+    const isBlocked = (tk) => blockersOf(tk).length > 0 || !!(tk.blockedReason && tk.blockedReason.trim());
     const requestsForTask = (id) => requests.filter((r) => r.linkedTaskId === id);
     const openRequestsForTask = (id) => requests.filter((r) => r.linkedTaskId === id && r.status !== "done" && r.status !== "declined");
     return {
-      taskById, storyOf, epicOf, agentOf, blockersOf, requestsForTask, openRequestsForTask,
+      taskById, storyOf, epicOf, agentOf, blockersOf, isBlocked, requestsForTask, openRequestsForTask,
       allTasks: tasks,
       density: t.density,
       opts: { epicStripe: t.epicStripe, epicChip: t.epicChips, avatars: t.avatars },
@@ -388,13 +391,19 @@ function App() {
       if (fAssignee !== null && tk.assignee !== fAssignee) return false;
       if (fPriority && tk.priority !== fPriority) return false;
       if (fEpic) { const st = stories.find((s) => s.id === tk.storyId); if (!st || st.epicId !== fEpic) return false; }
+      if (fBlocked) {
+        const blocked = (tk.deps || []).some((d) => { const dt = tasks.find((x) => x.id === d); return dt && dt.status !== "done"; })
+          || !!(tk.blockedReason && tk.blockedReason.trim());
+        if (fBlocked === "blocked" && !blocked) return false;
+        if (fBlocked === "unblocked" && blocked) return false;
+      }
       if (needle) {
         const hay = `${tk.id} ${tk.title} ${tk.desc} ${tk.notes}`.toLowerCase();
         if (!hay.includes(needle)) return false;
       }
       return true;
     });
-  }, [tasks, projectId, q, fAssignee, fPriority, fEpic, stories, epics]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [tasks, projectId, q, fAssignee, fPriority, fEpic, fBlocked, stories, epics]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const prioRank = (p) => (window.PRIORITIES.find((x) => x.id === p) || {}).rank ?? 9;
   const sortFn = (a, b) => t.sortByPriority ? prioRank(a.priority) - prioRank(b.priority) : 0;
@@ -443,6 +452,15 @@ function App() {
     }));
     doPatch();
   }, [whoAmI]);
+
+  // Set a task's blocker list (deps). Awaitable + non-optimistic so the detail
+  // panel can surface a server-side cycle rejection (400) instead of silently
+  // showing a dep that didn't take. Resolves with the updated task or throws.
+  const setDeps = useCallback(async (id, deps, logText) => {
+    const updated = await window.API.updateTask(id, { deps }, logText || null);
+    setTasks((prev) => prev.map((tk) => tk.id === id ? updated : tk));
+    return updated;
+  }, []);
 
   const addComment = useCallback((id, text) => {
     const body = text.trim();
@@ -702,7 +720,7 @@ function App() {
   }
 
   const openTask = openId ? tasks.find((x) => x.id === openId) : null;
-  const activeFilters = (fAssignee !== null ? 1 : 0) + (fPriority ? 1 : 0) + (fEpic ? 1 : 0);
+  const activeFilters = (fAssignee !== null ? 1 : 0) + (fPriority ? 1 : 0) + (fEpic ? 1 : 0) + (fBlocked ? 1 : 0);
   const myRequests = requests.filter((r) => r.fromProject === projectId || r.toProject === projectId);
   const inboxNew = requests.filter((r) => r.toProject === projectId && r.status === "incoming").length;
   const isAdmin = meInfo && meInfo.isAdmin;
@@ -809,11 +827,14 @@ function App() {
           <FilterChip label="Epic" value={fEpic} active={fEpic ? epicsOfProject.find(e=>e.id===fEpic)?.title : null}
             options={epicsOfProject.map((e) => ({ value: e.id, label: e.title }))}
             onChange={setFEpic} />
+          <FilterChip label="Blocked" value={fBlocked} active={fBlocked ? (fBlocked === "blocked" ? "Blocked" : "Unblocked") : null}
+            options={[{ value: "blocked", label: "Blocked only" }, { value: "unblocked", label: "Unblocked only" }]}
+            onChange={setFBlocked} />
           <button className={`fchip fchip--toggle ${t.sortByPriority ? "is-on" : ""}`} onClick={() => setTweak("sortByPriority", !t.sortByPriority)}>
             <Icon name="sort" size={14} /> Sort by priority
           </button>
           {activeFilters > 0 && (
-            <button className="filterbar__clear" onClick={() => { setFAssignee(null); setFPriority(null); setFEpic(null); }}>
+            <button className="filterbar__clear" onClick={() => { setFAssignee(null); setFPriority(null); setFEpic(null); setFBlocked(null); }}>
               Clear ({activeFilters})
             </button>
           )}
@@ -847,6 +868,7 @@ function App() {
           currentUser={auth.as}
           onClose={() => setOpenId(null)}
           onPatch={patch}
+          onSetDeps={setDeps}
           onComment={addComment}
           onOpen={setOpenId}
           onDelete={deleteTask}

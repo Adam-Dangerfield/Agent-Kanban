@@ -195,6 +195,9 @@ button { font-family: inherit; cursor: pointer; }
 .card:hover { box-shadow: var(--shadow-md); border-color: var(--border-strong); transform: translateY(-1px); }
 .card:active { cursor: grabbing; }
 .card--dragging { opacity: .4; }
+/* Blocked cards are de-emphasised (and sorted to the bottom of their column). */
+.card--blocked { opacity: .72; }
+.card--blocked:hover { opacity: 1; }
 .card__stripe { position: absolute; left: 0; top: 0; bottom: 0; width: 3px; }
 .card__head { display: flex; align-items: center; gap: 8px; margin-bottom: 7px; }
 .card__id { font-family: var(--mono); font-size: 11px; color: var(--ink-3); font-weight: 500; }
@@ -304,6 +307,17 @@ button { font-family: inherit; cursor: pointer; }
 .deprow--done { color: #2F7D63; }
 .deprow__id { font-family: var(--mono); font-size: 11px; color: var(--ink-3); }
 .deprow__t { flex: 1; font-size: 12.5px; color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* editable blocked-by rows */
+.deprow__link { flex: 1; min-width: 0; display: flex; align-items: center; gap: 8px; border: none; background: transparent; padding: 0; text-align: left; color: inherit; cursor: pointer; }
+.deprow__x { flex: none; border: none; background: transparent; color: var(--ink-3); padding: 2px; border-radius: 5px; display: inline-flex; cursor: pointer; transition: .12s; }
+.deprow__x:hover { background: var(--surface); color: #C2453B; }
+.deps__addbtn { align-self: flex-start; display: inline-flex; align-items: center; gap: 6px; border: 1px dashed var(--border-strong); background: transparent; color: var(--ink-2); border-radius: var(--r-sm); padding: 6px 10px; font-size: 12.5px; cursor: pointer; transition: .12s; }
+.deps__addbtn:hover { background: var(--surface-2); color: var(--ink); }
+.deps__add { display: flex; flex-direction: column; gap: 8px; border: 1px solid var(--border); border-radius: var(--r-sm); padding: 10px; background: var(--surface-2); }
+.deps__results { display: flex; flex-direction: column; gap: 4px; max-height: 200px; overflow: auto; }
+.deps__result { display: flex; align-items: center; gap: 8px; border: 1px solid var(--border); background: var(--surface); border-radius: var(--r-sm); padding: 6px 9px; text-align: left; cursor: pointer; transition: .12s; }
+.deps__result:hover { background: var(--accent-soft); border-color: var(--accent); }
+.deps__err { color: #C2453B; font-size: 12px; }
 
 .activity { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 11px; }
 .activity__row { display: flex; align-items: center; gap: 9px; }

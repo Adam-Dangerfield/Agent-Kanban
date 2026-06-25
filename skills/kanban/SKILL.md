@@ -91,6 +91,8 @@ Use `node kanban.mjs <subcommand>` or add `--json` for raw JSON output.
 | Get one task (comments, activity, attachments) | `task <id>` | `GET /tasks/:id` |
 | Claim a ticket | `claim <id> [assigneeId]` | `PATCH /tasks/:id` `{status,assignee_id,_log}` |
 | Change status | `status <id> <backlog\|todo\|in_progress\|done>` | `PATCH /tasks/:id` `{status,_log}` |
+| Block a task | `block <id> --on <blockerId>` (ticket) or `block <id> --reason "<text>"` (external) | `PATCH /tasks/:id` `{deps\|blocked_reason,_log}` |
+| Unblock a task | `unblock <id> --on <blockerId>` or `unblock <id>` (clears reason) | `PATCH /tasks/:id` |
 | Set branch + merge state | `branch <id> <branchName> <none\|dev\|pr\|merged>` | `PATCH /tasks/:id` `{branch,merge_state,_log}` |
 | Post a progress comment | `comment <id> <text>` | `POST /tasks/:id/comments` `{body}` |
 | Create a ticket | `new <projectId> <title> [--story id] [--id id] [--created ISO] [--assignee agentId]` | `POST /projects/:id/tasks` |
@@ -126,6 +128,8 @@ Good: `{"status":"in_progress","_log":"claude picked up this task"}`
 
 **Accepting a request** spawns a linked card on the target board automatically — the response contains `{ request, spawnedTask }`.
 
+**Blocked is derived, not a status.** A task is "blocked" when it has an open (non-`done`) task-blocker in `deps`, or a non-empty `blocked_reason` — there is no `blocked` status value. A block clears itself when the blocking ticket reaches `done`. Adding a blocker that would form a dependency cycle is rejected with `400`.
+
 ---
 
 ## Token hygiene
@@ -151,6 +155,9 @@ node kanban.mjs task AWS-101
 node kanban.mjs claim AWS-101
 node kanban.mjs claim AWS-101 nova
 node kanban.mjs status AWS-101 done
+node kanban.mjs block AWS-101 --on AWS-100        # AWS-101 is blocked by AWS-100
+node kanban.mjs block AWS-101 --reason "waiting on vendor SLA"
+node kanban.mjs unblock AWS-101 --on AWS-100      # or: unblock AWS-101 (clears the reason)
 node kanban.mjs branch AWS-101 feat/iam-bootstrap pr
 node kanban.mjs comment AWS-101 "Terraform plan looks clean, applying to dev"
 node kanban.mjs new aws "Rotate IAM access keys" --priority high --desc "90-day rotation"

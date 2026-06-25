@@ -3,11 +3,12 @@
    ============================================================ */
 
 function TaskCard({ task, epic, story, agent, blockedBy, waitingOn, density, opts, onOpen, onDragStart, onDragEnd, dragging }) {
-  const blocked = blockedBy.length > 0;
+  const reason = (task.blockedReason || "").trim();
+  const blocked = blockedBy.length > 0 || !!reason;
   const waits = waitingOn || [];
   return (
     <article
-      className={`card ${dragging ? "card--dragging" : ""} ${density === "compact" ? "card--compact" : ""}`}
+      className={`card ${dragging ? "card--dragging" : ""} ${density === "compact" ? "card--compact" : ""} ${blocked ? "card--blocked" : ""}`}
       draggable
       onDragStart={(e) => onDragStart(e, task.id)}
       onDragEnd={onDragEnd}
@@ -25,8 +26,9 @@ function TaskCard({ task, epic, story, agent, blockedBy, waitingOn, density, opt
         <div className="card__tags">
           {opts.epicChip && epic && <span className="tag"><span className="tag__dot" style={{ background: epicColor(epic) }} />{epic.title}</span>}
           {blocked && (
-            <span className="tag tag--blocked" title={`Blocked by ${blockedBy.join(", ")}`}>
-              <Icon name="block" size={12} />{blockedBy.length} block{blockedBy.length > 1 ? "s" : ""}
+            <span className="tag tag--blocked"
+              title={blockedBy.length ? `Blocked by ${blockedBy.join(", ")}${reason ? ` · ${reason}` : ""}` : `Blocked: ${reason}`}>
+              <Icon name="block" size={12} />{blockedBy.length ? `${blockedBy.length} block${blockedBy.length > 1 ? "s" : ""}` : "Blocked"}
             </span>
           )}
           {waits.map((r) => {
@@ -75,7 +77,7 @@ function Column({ col, tasks, ctx, onDropTask, onOpen, dragId, setDragId, addInC
         </button>
       </header>
       <div className="col__body">
-        {tasks.map((t) => (
+        {[...tasks].sort((a, b) => (ctx.isBlocked(a) ? 1 : 0) - (ctx.isBlocked(b) ? 1 : 0)).map((t) => (
           <TaskCard
             key={t.id}
             task={t}

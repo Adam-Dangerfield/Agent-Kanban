@@ -20,6 +20,9 @@
  *   claim <id> [assigneeId]               Set status=in_progress (+ optional assignee)
  *   status <id> <backlog|todo|in_progress|done>
  *                                          Change task status
+ *   block <id> --on <blockerId> | --reason "<text>"
+ *                                          Mark a task blocked by another ticket, or by a free-text reason
+ *   unblock <id> [--on <blockerId>]        Remove a blocker (or clear the blocked reason if no --on)
  *   branch <id> <branch> <none|dev|pr|merged>
  *                                          Set branch name + merge state
  *   comment <id> <text...>                Post a comment
@@ -310,6 +313,8 @@ Subcommands:
   task <id>
   claim <id> [assigneeId]
   status <id> <backlog|todo|in_progress|done>
+  block <id> --on <blockerId> | --reason "<text>"   (mark blocked by a ticket or a free-text reason)
+  unblock <id> [--on <blockerId>]                   (remove a blocker, or clear the reason)
   branch <id> <branchName> <none|dev|pr|merged>
   comment <id> <text...>
   new <projectId> <title...> [--priority <p>] [--desc <d>] [--status <s>] [--story <id>] [--id <id>] [--created <ISO>] [--assignee <agentId>]
@@ -399,6 +404,52 @@ async function cmdStatus(args) {
     method: 'PATCH',
     headers: authHeaders({ 'Content-Type': 'application/json' }),
     body: JSON.stringify({ status, _log: `status set to ${status}` }),
+  });
+  print(data);
+}
+
+// block <id> --on <blockerId>   → add a task blocker (rejected if it would cycle)
+// block <id> --reason "<text>"  → set a free-text "blocked on something external" reason
+async function cmdBlock(args) {
+  requireEnv();
+  const [onVal, a2] = extractFlag(args, '--on');
+  const [reasonVal, a3] = extractFlag(a2, '--reason');
+  const [id] = a3;
+  if (!id || (!onVal && reasonVal === undefined)) {
+    die('Usage: block <id> --on <blockerId>   |   block <id> --reason "<text>"');
+  }
+  let body;
+  if (onVal) {
+    const task = await apiFetch(`/tasks/${id}`, { headers: authHeaders() });
+    const deps = Array.isArray(task.deps) ? task.deps.slice() : [];
+    if (!deps.includes(onVal)) deps.push(onVal);
+    body = { deps, _log: `blocked by ${onVal}` };
+  } else {
+    body = { blocked_reason: reasonVal, _log: `blocked: ${reasonVal}` };
+  }
+  const data = await apiFetch(`/tasks/${id}`, {
+    method: 'PATCH', headers: authHeaders({ 'Content-Type': 'application/json' }), body: JSON.stringify(body),
+  });
+  print(data);
+}
+
+// unblock <id> --on <blockerId> → remove that task blocker
+// unblock <id>                  → clear the free-text blocked reason
+async function cmdUnblock(args) {
+  requireEnv();
+  const [onVal, a2] = extractFlag(args, '--on');
+  const [id] = a2;
+  if (!id) die('Usage: unblock <id> --on <blockerId>   |   unblock <id>  (clears the blocked reason)');
+  let body;
+  if (onVal) {
+    const task = await apiFetch(`/tasks/${id}`, { headers: authHeaders() });
+    const deps = (Array.isArray(task.deps) ? task.deps : []).filter((d) => d !== onVal);
+    body = { deps, _log: `removed blocker ${onVal}` };
+  } else {
+    body = { blocked_reason: null, _log: 'cleared blocked reason' };
+  }
+  const data = await apiFetch(`/tasks/${id}`, {
+    method: 'PATCH', headers: authHeaders({ 'Content-Type': 'application/json' }), body: JSON.stringify(body),
   });
   print(data);
 }
@@ -914,6 +965,8 @@ const commands = {
   task:           () => cmdTask(rest),
   claim:          () => cmdClaim(rest),
   status:         () => cmdStatus(rest),
+  block:          () => cmdBlock(rest),
+  unblock:        () => cmdUnblock(rest),
   branch:         () => cmdBranch(rest),
   comment:        () => cmdComment(rest),
   new:            () => cmdNew(rest),

@@ -89,7 +89,8 @@ its scope.
 | `branch` | `branch` | |
 | `mergeState` | `merge_state` | `none\|dev\|pr\|merged` |
 | `fromRequestId` | `from_request_id` | |
-| `deps` | `deps` | array of task ids (blocked-by) |
+| `deps` | `deps` | array of task ids (blocked-by). Settable on PATCH; a change that would create a cycle → `400` |
+| `blockedReason` | `blocked_reason` | free-text block (non-ticket), e.g. "waiting on vendor"; null when none |
 | `comments` | `comments` | array; see Comment |
 | `activity` | `activity` | array; see Activity |
 | `attachments` | `attachments` | array; see Attachment — hydrated on all task GETs |
