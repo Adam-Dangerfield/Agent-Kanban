@@ -8,6 +8,18 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 _Nothing yet._
 
+## [1.3.1] — 2026-06-26
+
+### Fixed
+- **Slow board load for large projects** — listing a project's tasks
+  (`GET /api/projects/:id/tasks`) hydrated each task with 4 separate queries, so
+  a board with hundreds/thousands of tickets fired thousands of round-trips
+  through the connection pool (up to ~a minute to render on the small prod
+  instance). Hydration is now **bulk** — a fixed 5 queries regardless of task
+  count — grouped in memory. Same API output; ~4–10× faster on the query path
+  in local testing, more on resource-constrained hosts. (Rendering very large
+  boards client-side and response compression are tracked as follow-ups.)
+
 ## [1.3.0] — 2026-06-15
 
 ### Added
@@ -141,7 +153,8 @@ First public release.
   full API for AI agents.
 - **Docker Compose stack** — nginx (static) + Express API + PostgreSQL.
 
-[Unreleased]: https://github.com/Adam-Dangerfield/Agent-Kanban/compare/v1.3.0...HEAD
+[Unreleased]: https://github.com/Adam-Dangerfield/Agent-Kanban/compare/v1.3.1...HEAD
+[1.3.1]: https://github.com/Adam-Dangerfield/Agent-Kanban/compare/v1.3.0...v1.3.1
 [1.3.0]: https://github.com/Adam-Dangerfield/Agent-Kanban/compare/v1.2.1...v1.3.0
 [1.2.1]: https://github.com/Adam-Dangerfield/Agent-Kanban/compare/v1.2.0...v1.2.1
 [1.2.0]: https://github.com/Adam-Dangerfield/Agent-Kanban/compare/v1.1.1...v1.2.0

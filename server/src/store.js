@@ -851,7 +851,42 @@ class PgStore {
          FROM tasks WHERE project_id = $1 ORDER BY id`,
       [projectId]
     );
-    return Promise.all(rows.map((r) => this._hydrate(r)));
+    // Bulk-hydrate: 4 project-scoped queries grouped in JS, NOT 4-per-task.
+    // The old Promise.all(rows.map(_hydrate)) fired N×4+1 queries through a
+    // 10-connection pool — for a project with hundreds/thousands of tasks that
+    // was the dominant cause of slow board loads. This is 5 queries flat.
+    return this._hydrateMany(rows);
+  }
+
+  // Hydrate many task rows with a fixed number of queries (independent of N).
+  async _hydrateMany(rows) {
+    if (rows.length === 0) return [];
+    const ids = rows.map((r) => r.id);
+    const [depsR, comR, actR, attR] = await Promise.all([
+      this._q(`SELECT task_id, depends_on FROM task_deps WHERE task_id = ANY($1::text[]) ORDER BY depends_on`, [ids]),
+      this._q(`SELECT id, task_id, author_id, body, created_at FROM comments WHERE task_id = ANY($1::text[]) ORDER BY created_at`, [ids]),
+      this._q(`SELECT id, entity_type, entity_id, actor_id, text, created_at FROM activity
+                 WHERE entity_type = 'task' AND entity_id = ANY($1::text[]) ORDER BY created_at`, [ids]),
+      this._q(`SELECT id, entity_type, entity_id, filename, content_type, size_bytes, uploaded_by, created_at
+                 FROM attachments WHERE entity_type = 'task' AND entity_id = ANY($1::text[]) ORDER BY created_at`, [ids]),
+    ]);
+    const groupBy = (arr, key) => {
+      const m = new Map();
+      for (const r of arr) { const k = r[key]; (m.get(k) || m.set(k, []).get(k)).push(r); }
+      return m;
+    };
+    const depsBy = new Map();
+    for (const r of depsR.rows) { (depsBy.get(r.task_id) || depsBy.set(r.task_id, []).get(r.task_id)).push(r.depends_on); }
+    const comBy = groupBy(comR.rows, 'task_id');
+    const actBy = groupBy(actR.rows, 'entity_id');
+    const attBy = groupBy(attR.rows, 'entity_id');
+    return rows.map((r) => ({
+      ...r,
+      deps:        depsBy.get(r.id) || [],
+      comments:    comBy.get(r.id)  || [],
+      activity:    actBy.get(r.id)  || [],
+      attachments: attBy.get(r.id)  || [],
+    }));
   }
 
   async task(id) {
