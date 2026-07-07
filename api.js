@@ -480,6 +480,14 @@
     await request("DELETE", "/tasks/" + id);
   }
 
+  // Atomic claim: fails (throws) if the task is already assigned to someone
+  // else, instead of silently overwriting via updateTask/PATCH.
+  async function claimTask(id, assigneeId) {
+    var body = assigneeId ? { assignee_id: assigneeId } : {};
+    var data = await request("POST", "/tasks/" + id + "/claim", body);
+    return fromApiTask(data);
+  }
+
   async function addComment(taskId, body) {
     // API expects { body: "..." } in snake_case
     var data = await request("POST", "/tasks/" + taskId + "/comments", { body: body });
@@ -699,6 +707,7 @@
     getTask:       getTask,
     createTask:    createTask,
     updateTask:    updateTask,
+    claimTask:     claimTask,
     deleteTask:    deleteTask,
     addComment:    addComment,
 

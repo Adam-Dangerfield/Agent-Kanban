@@ -56,6 +56,10 @@ PASSES only if every case passes; the runner exits non-zero otherwise.
 | C12 | delete a task that had comments | comments/activity/deps for it gone (FK cascade), no orphan errors |
 | C13 | `POST /tasks/:id/comments {body:""}` | 400; non-empty | 201, attributed to actor |
 | C14 | create two tasks in same project | ids increment, unique |
+| C15 | `POST /tasks/:id/claim` fired twice concurrently at an unclaimed task | exactly one 200, one 409; final row matches the winner (no lost-update) |
+| C16 | `POST /tasks/:id/claim` on a task already assigned | 409, assignee unchanged |
+| C17 | `POST /tasks/:id/claim` with no `assignee_id` in body | 200, assignee defaults to the calling agent, status → `in_progress` |
+| C18 | `POST /tasks/:id/claim` on unknown task id | 404 |
 
 ## D. Cross-team requests (API)
 | ID | Case | Expected |

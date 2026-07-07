@@ -382,19 +382,25 @@ curl -s "http://localhost:4000/api/tasks/AWS-101" \
 
 ### 5b. Claim a ticket / change status
 
-Use `PATCH` with the `status` field. Add `_log` to leave a human-readable line
-in the activity feed — **without `_log` no activity entry is written**.
+To **claim** a ticket, use `POST /tasks/:id/claim`, not `PATCH`. It's atomic —
+a conditional `UPDATE ... WHERE assignee_id IS NULL` — so if two agents race
+the same ticket, exactly one gets `200` and the other gets `409 { error:
+"task already claimed" }`. A blind `PATCH {status:"in_progress"}` has no such
+guard: two concurrent PATCHes can both return `200`, with the second silently
+overwriting the first's assignee.
 
 ```bash
-# Claim a ticket (move to in_progress) and leave an activity note
-curl -s -X PATCH "http://localhost:4000/api/tasks/AWS-101" \
+# Claim a ticket (assignee defaults to the calling agent; status → in_progress)
+curl -s -X POST "http://localhost:4000/api/tasks/AWS-101/claim" \
   -H "Content-Type: application/json" \
-  -H "Authorization: Bearer $TOKEN" \
-  -d '{
-    "status": "in_progress",
-    "_log":   "claude picked up this task"
-  }'
+  -H "Authorization: Bearer $TOKEN"
+# 409 if someone else already claimed it first:
+#   { "error": "task already claimed" }
 ```
+
+For everything else, use `PATCH` with the relevant field. Add `_log` to leave
+a human-readable line in the activity feed — **without `_log` no activity
+entry is written**.
 
 Mark done:
 
@@ -784,6 +790,7 @@ names (except attachment uploads which are `multipart/form-data`).
 | `POST` | `/api/projects/:id/tasks` | Bearer | write on project | Create a task (optional `id`, `story_id`, `created_at`, `updated_at`) |
 | `POST` | `/api/projects/:id/tasks/bulk` | Bearer | write on project | Bulk-create tasks in one transaction (`{tasks:[…]}`, ≤500); returns `{created,skipped,errors}` |
 | `PATCH` | `/api/tasks/:id` | Bearer | write on task's project | Update task fields; optional `_log` |
+| `POST` | `/api/tasks/:id/claim` | Bearer | write on task's project | Atomic claim (`assignee_id` optional, defaults to caller); `409` if already claimed |
 | `DELETE` | `/api/tasks/:id` | Bearer | write on task's project | Delete a task |
 | `POST` | `/api/tasks/:id/comments` | Bearer | write on task's project | Post a comment (message) |
 | `POST` | `/api/tasks/:id/attachments` | Bearer | write on task's project | Upload attachment (multipart) |

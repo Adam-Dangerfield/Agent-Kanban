@@ -514,6 +514,69 @@ describe('C. Tasks', () => {
     const n2 = parseInt(t2.id.split('-')[1], 10);
     assert.ok(n2 > n1, `t2 id (${t2.id}) must be numerically greater than t1 (${t1.id})`);
   });
+
+  test('C15 concurrent claim: two agents race the same unclaimed task -> exactly one 200, one 409', async () => {
+    // Fresh, unclaimed task (no assignee_id) in 'data' project — claude has write there.
+    const { status: cs, body: created } = await api('POST', '/projects/data/tasks', {
+      token: managerToken,
+      body: { title: 'C15 race task', status: 'todo' },
+    });
+    assert.equal(cs, 201, `expected 201, got ${cs}: ${JSON.stringify(created)}`);
+    assert.equal(created.assignee_id, null, 'freshly created task must be unclaimed');
+    const taskId = created.id;
+
+    // Two different agents claim the same task at the same time.
+    const [r1, r2] = await Promise.all([
+      api('POST', `/tasks/${taskId}/claim`, { token: managerToken, body: { assignee_id: 'adam' } }),
+      api('POST', `/tasks/${taskId}/claim`, { token: agentToken, body: { assignee_id: 'claude' } }),
+    ]);
+
+    const statuses = [r1.status, r2.status].sort();
+    assert.deepEqual(statuses, [200, 409], `expected exactly one 200 and one 409, got ${JSON.stringify(statuses)}`);
+
+    const winner = r1.status === 200 ? r1.body : r2.body;
+    const loser  = r1.status === 200 ? r2.body : r1.body;
+    assert.equal(winner.status, 'in_progress', 'winner task moved to in_progress');
+    assert.ok(['adam', 'claude'].includes(winner.assignee_id), 'winner assignee is one of the two racers');
+    assert.ok(loser.error, 'loser gets an error body, not a silently-overwritten task');
+
+    // No lost-update: the final row matches the winner, not the loser.
+    const { status: gs, body: gt } = await api('GET', `/tasks/${taskId}`, { token: managerToken });
+    assert.equal(gs, 200);
+    assert.equal(gt.assignee_id, winner.assignee_id, 'final assignee matches the winner exactly');
+  });
+
+  test('C16 POST /tasks/:id/claim on an already-claimed task returns 409', async () => {
+    // AWS-102 is seeded already assigned to 'adam'.
+    const { status, body } = await api('POST', '/tasks/AWS-102/claim', {
+      token: agentToken,
+      body: { assignee_id: 'claude' },
+    });
+    assert.equal(status, 409);
+    assert.ok(body.error, 'error body present');
+
+    // Assignee is untouched.
+    const { body: gt } = await api('GET', '/tasks/AWS-102', { token: managerToken });
+    assert.equal(gt.assignee_id, 'adam', 'assignee unchanged after failed claim');
+  });
+
+  test('C17 POST /tasks/:id/claim on an unclaimed task defaults assignee to the calling agent', async () => {
+    const { status: cs, body: created } = await api('POST', '/projects/data/tasks', {
+      token: managerToken,
+      body: { title: 'C17 default-assignee task' },
+    });
+    assert.equal(cs, 201);
+
+    const { status, body } = await api('POST', `/tasks/${created.id}/claim`, { token: agentToken });
+    assert.equal(status, 200);
+    assert.equal(body.assignee_id, 'claude', 'defaults to the calling agent when assignee_id omitted');
+    assert.equal(body.status, 'in_progress');
+  });
+
+  test('C18 POST /tasks/:id/claim on unknown task returns 404', async () => {
+    const { status } = await api('POST', '/tasks/NOPE/claim', { token: managerToken });
+    assert.equal(status, 404);
+  });
 });
 
 // ---------------------------------------------------------------------------

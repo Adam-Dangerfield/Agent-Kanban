@@ -910,6 +910,24 @@ app.post('/api/projects/:id/tasks/bulk', async (req, res) => {
   } catch (e) { console.error(e); res.status(500).json({ error: 'internal error' }); }
 });
 
+// Atomic claim: succeeds only if the task is unassigned (`assignee_id IS
+// NULL`), so two agents racing the same task get exactly one 200 and one 409
+// — never both landing a silent overwrite via PATCH. Defaults assignee to
+// the calling agent; pass assignee_id to claim on behalf of another agent.
+app.post('/api/tasks/:id/claim', async (req, res) => {
+  try {
+    const t = await store.task(req.params.id);
+    if (!t) return res.status(404).json({ error: 'not found' });
+    if (!await canWrite(req.actor, req.isAdmin, t.project_id)) {
+      return res.status(403).json({ error: 'forbidden' });
+    }
+    const assigneeId = req.body.assignee_id || req.actor;
+    const claimed = await store.claimTask(req.params.id, assigneeId, req.actor, 'claimed this task');
+    if (!claimed) return res.status(409).json({ error: 'task already claimed' });
+    return res.status(200).json(claimed);
+  } catch (e) { console.error(e); res.status(500).json({ error: 'internal error' }); }
+});
+
 // PATCH supports any column + an optional `_log` message for the activity feed.
 app.patch('/api/tasks/:id', async (req, res) => {
   try {

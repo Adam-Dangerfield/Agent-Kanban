@@ -89,7 +89,7 @@ Use `node kanban.mjs <subcommand>` or add `--json` for raw JSON output.
 | List tasks in a project | `tasks [projectId]` (defaults to `$KANBAN_PROJECT`) | `GET /projects/:id/tasks` |
 | Filter tasks | `tasks [projectId] --status in_progress --assignee claude` | client-side filter |
 | Get one task (comments, activity, attachments) | `task <id>` | `GET /tasks/:id` |
-| Claim a ticket | `claim <id> [assigneeId]` | `PATCH /tasks/:id` `{status,assignee_id,_log}` |
+| Claim a ticket (atomic) | `claim <id> [assigneeId]` | `POST /tasks/:id/claim` — 409 if already claimed |
 | Change status | `status <id> <backlog\|todo\|in_progress\|done>` | `PATCH /tasks/:id` `{status,_log}` |
 | Block a task | `block <id> --on <blockerId>` (ticket) or `block <id> --reason "<text>"` (external) | `PATCH /tasks/:id` `{deps\|blocked_reason,_log}` |
 | Unblock a task | `unblock <id> --on <blockerId>` or `unblock <id>` (clears reason) | `PATCH /tasks/:id` |

@@ -8,6 +8,26 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 _Nothing yet._
 
+## [1.4.0] — 2026-06-26
+
+### Added
+- **Atomic task claim** — `POST /api/tasks/:id/claim` claims a task with a
+  conditional `UPDATE ... WHERE assignee_id IS NULL` (Postgres row-locking
+  serializes the race), not a blind `PATCH`. Two agents claiming the same task
+  concurrently now get exactly one `200` and one `409` — previously both could
+  get `200`, with the second silently overwriting the first's assignee (lost
+  update). `kanban claim` uses the new endpoint and reports a clear message on
+  `409`; `MemoryStore` gained the equivalent `assignee_id != null` guard for
+  parity. (Contributed by @vladmesh.)
+
+### Fixed
+- **E2E standalone stack skipped migrations** — `tests/docker-compose.e2e-standalone.yml`
+  mounted `db/schema.sql` into Postgres's init dir and ran the API/seed containers
+  with no migrate step, so a fresh standalone stack never applied `db/migrations/*`
+  (e.g. 0003's `blocked_reason`) and half of `npm run test:api` 500'd. `api` and
+  `seed` now run `scripts/migrate.js` before starting, matching `docker-compose.yml`.
+  (Contributed by @vladmesh.)
+
 ## [1.3.1] — 2026-06-26
 
 ### Fixed
@@ -153,7 +173,8 @@ First public release.
   full API for AI agents.
 - **Docker Compose stack** — nginx (static) + Express API + PostgreSQL.
 
-[Unreleased]: https://github.com/Adam-Dangerfield/Agent-Kanban/compare/v1.3.1...HEAD
+[Unreleased]: https://github.com/Adam-Dangerfield/Agent-Kanban/compare/v1.4.0...HEAD
+[1.4.0]: https://github.com/Adam-Dangerfield/Agent-Kanban/compare/v1.3.1...v1.4.0
 [1.3.1]: https://github.com/Adam-Dangerfield/Agent-Kanban/compare/v1.3.0...v1.3.1
 [1.3.0]: https://github.com/Adam-Dangerfield/Agent-Kanban/compare/v1.2.1...v1.3.0
 [1.2.1]: https://github.com/Adam-Dangerfield/Agent-Kanban/compare/v1.2.0...v1.2.1

@@ -263,6 +263,12 @@ POST   /api/projects/:id/tasks/bulk  { tasks:[ {title,...}, ... ] }
         Use this for tracker imports / bulk ops — far higher throughput than
         N single POSTs, which each pay an auth + multi-query cost.)
 PATCH  /api/tasks/:id             { ...fields, _log? }  -> Task | 404
+POST   /api/tasks/:id/claim       { assignee_id? }      -> 200 Task | 404 | 409
+       (atomic: succeeds only if the task is unassigned — a conditional
+        `UPDATE ... WHERE assignee_id IS NULL`, not a blind PATCH. Sets
+        status=in_progress and assignee_id (default: the calling agent).
+        Two agents racing the same task: exactly one gets 200, the other 409
+        { error: "task already claimed" } — no silent lost-update.)
 DELETE /api/tasks/:id                                   -> 204
 POST   /api/tasks/:id/comments    { body }              -> 201 Comment
 

@@ -17,7 +17,8 @@
  *   tasks [projectId] [--status s] [--assignee a]   (projectId optional if KANBAN_PROJECT set)
  *                                          List tasks (client-side filters)
  *   task <id>                              Get one task (comments/activity/attachments)
- *   claim <id> [assigneeId]               Set status=in_progress (+ optional assignee)
+ *   claim <id> [assigneeId]               Atomic claim: assignee=you (or given id), status=in_progress;
+ *                                          fails loudly if already claimed (no silent double-claim)
  *   status <id> <backlog|todo|in_progress|done>
  *                                          Change task status
  *   block <id> --on <blockerId> | --reason "<text>"
@@ -311,7 +312,7 @@ Subcommands:
   projects
   tasks [projectId] [--status <s>] [--assignee <a>]   (projectId optional if KANBAN_PROJECT set)
   task <id>
-  claim <id> [assigneeId]
+  claim <id> [assigneeId]                           (atomic: 409 if already claimed)
   status <id> <backlog|todo|in_progress|done>
   block <id> --on <blockerId> | --reason "<text>"   (mark blocked by a ticket or a free-text reason)
   unblock <id> [--on <blockerId>]                   (remove a blocker, or clear the reason)
@@ -384,14 +385,28 @@ async function cmdClaim(args) {
   requireEnv();
   const [id, assigneeId] = args;
   if (!id) die('Usage: claim <id> [assigneeId]');
-  const body = { status: 'in_progress', _log: `${TOKEN.slice(0, 13)} claimed this task` };
+  const body = {};
   if (assigneeId) body.assignee_id = assigneeId;
-  const data = await apiFetch(`/tasks/${id}`, {
-    method: 'PATCH',
-    headers: authHeaders({ 'Content-Type': 'application/json' }),
-    body: JSON.stringify(body),
-  });
-  print(data);
+  const url = `${BASE}/tasks/${id}/claim`;
+  let res;
+  try {
+    res = await fetch(url, {
+      method: 'POST',
+      headers: authHeaders({ 'Content-Type': 'application/json' }),
+      body: JSON.stringify(body),
+    });
+  } catch (err) {
+    die(`Network error reaching ${url}: ${err.message}`);
+  }
+  if (res.status === 409) {
+    die(`Task ${id} is already claimed — someone else got there first.`);
+  }
+  if (!res.ok) {
+    let text = '';
+    try { text = await res.text(); } catch (_) {}
+    die(`HTTP ${res.status} ${res.statusText} — /tasks/${id}/claim\n${text}`);
+  }
+  print(await res.json());
 }
 
 async function cmdStatus(args) {

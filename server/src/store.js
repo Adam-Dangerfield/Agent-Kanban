@@ -301,6 +301,20 @@ class MemoryStore {
     return this.hydrateTask(t);
   }
 
+  // Atomic claim: only succeeds if the task is unassigned. Two agents racing
+  // the same task — the loser gets null (route turns that into 409), never a
+  // silent overwrite. No `await` in this body, so nothing can interleave
+  // between the read and the write.
+  claimTask(id, assigneeId, actorId, logText) {
+    const t = this.tasks.find((x) => x.id === id);
+    if (!t) return null;
+    if (t.assignee_id != null) return null;
+    t.assignee_id = assigneeId;
+    t.status = 'in_progress';
+    if (logText) this.log('task', id, actorId, logText);
+    return this.hydrateTask(t);
+  }
+
   // Mirror of PgStore.wouldCreateCycle over the in-memory task.deps graph.
   wouldCreateCycle(id, deps) {
     const depsOf = (n) => { const tk = this.tasks.find((x) => x.id === n); return (tk && tk.deps) || []; };
@@ -1116,6 +1130,24 @@ class PgStore {
     if (logText) await this.log('task', id, actorId, logText);
     // If this update closed the task, anything it was blocking may now be free.
     if (fields.status === 'done') await this._signalUnblocked(id, actorId);
+    return this.task(id);
+  }
+
+  // Atomic claim: a single conditional UPDATE guarded by `assignee_id IS NULL`.
+  // Postgres row-locking serializes concurrent claims of the same task — the
+  // first commits and clears the NULL, so a racing second UPDATE's WHERE no
+  // longer matches and RETURNING comes back empty. Caller (route) turns an
+  // empty result into 409; the caller already confirmed the row exists.
+  async claimTask(id, assigneeId, actorId, logText) {
+    const { rows } = await this._q(
+      `UPDATE tasks
+          SET status = 'in_progress', assignee_id = $2, updated_at = now()
+        WHERE id = $1 AND assignee_id IS NULL
+        RETURNING id`,
+      [id, assigneeId]
+    );
+    if (rows.length === 0) return null;
+    if (logText) await this.log('task', id, actorId, logText);
     return this.task(id);
   }
 
