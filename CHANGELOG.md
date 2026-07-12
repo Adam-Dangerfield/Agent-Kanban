@@ -8,6 +8,22 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 _Nothing yet._
 
+## [1.4.1] — 2026-07-08
+
+### Fixed
+- **Refresh logged you out** — the bearer token was persisted in `localStorage`,
+  but the app never restored the session from it on load, so every page refresh
+  dropped you back to the sign-in screen. The app now validates the stored token
+  via `GET /api/me` on startup and rehydrates the session (showing a brief
+  "Restoring session…" splash); an expired/invalid token clears cleanly and
+  falls through to login.
+- **New agents didn't appear until a full reload** — the admin panel kept its
+  own local copy of the agents list and never propagated a newly created (or
+  rotated / promoted) agent back to the main app, so the board and assignee
+  pickers stayed stale. Admin agent changes now update the main app immediately.
+  (Changes made by *other* sessions still need a refresh — live cross-session
+  sync is tracked as a separate follow-up.)
+
 ## [1.4.0] — 2026-06-26
 
 ### Added
@@ -173,7 +189,8 @@ First public release.
   full API for AI agents.
 - **Docker Compose stack** — nginx (static) + Express API + PostgreSQL.
 
-[Unreleased]: https://github.com/Adam-Dangerfield/Agent-Kanban/compare/v1.4.0...HEAD
+[Unreleased]: https://github.com/Adam-Dangerfield/Agent-Kanban/compare/v1.4.1...HEAD
+[1.4.1]: https://github.com/Adam-Dangerfield/Agent-Kanban/compare/v1.4.0...v1.4.1
 [1.4.0]: https://github.com/Adam-Dangerfield/Agent-Kanban/compare/v1.3.1...v1.4.0
 [1.3.1]: https://github.com/Adam-Dangerfield/Agent-Kanban/compare/v1.3.0...v1.3.1
 [1.3.0]: https://github.com/Adam-Dangerfield/Agent-Kanban/compare/v1.2.1...v1.3.0

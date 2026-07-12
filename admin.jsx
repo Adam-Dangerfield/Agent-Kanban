@@ -1255,12 +1255,17 @@ function TabTokens({ projects }) {
 /* ============================================================
    AdminPanel (root) — receives agents, projects, onClose from app.jsx
    ============================================================ */
-function AdminPanel({ agents: initialAgents, projects, onClose }) {
+function AdminPanel({ agents: initialAgents, projects, onClose, onAgentsChange }) {
   const [tab, setTab] = useState("agents");
   const [agents, setAgents] = useState(initialAgents || []);
 
   // Keep agents in sync if parent updates
   useEffect(() => { setAgents(initialAgents || []); }, [initialAgents]);
+
+  // Propagate agent changes (new agent, rotate, admin toggle) back to the main
+  // app so the board / assignee lists reflect them immediately — otherwise a
+  // newly created agent wouldn't appear until a full page reload.
+  const applyAgents = (a) => { setAgents(a); if (onAgentsChange) onAgentsChange(a); };
 
   return (
     <>
@@ -1285,7 +1290,7 @@ function AdminPanel({ agents: initialAgents, projects, onClose }) {
           </div>
           <div className="admin-panel__body">
             {tab === "agents" && (
-              <TabAgents agents={agents} projects={projects} onAgentsChange={setAgents} />
+              <TabAgents agents={agents} projects={projects} onAgentsChange={applyAgents} />
             )}
             {tab === "permissions" && (
               <TabPermissions agents={agents} projects={projects} />

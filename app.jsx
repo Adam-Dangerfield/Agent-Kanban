@@ -160,6 +160,11 @@ function FilterChip({ label, active, options, value, onChange, renderOpt }) {
 function App() {
   const [t, setTweak] = useTweaks(TWEAK_DEFAULTS);
   const [auth, setAuth] = useState(null);
+  // Session restore: the bearer token is persisted in localStorage, but auth
+  // state starts null — so without this a refresh drops you back to the login
+  // screen even though a valid token is right there. `booting` avoids flashing
+  // the Login screen while we validate the stored token via /me.
+  const [booting, setBooting] = useState(true);
 
   // --- Reference data (loaded after auth) ---
   const [agents, setAgents] = useState([]);
@@ -215,6 +220,35 @@ function App() {
   /* ----------------------------------------------------------
      Initial data load: agents + projects (once, after auth)
   ---------------------------------------------------------- */
+  // Restore a session from the persisted token on first load (fixes "refresh
+  // logs me out"). Validates the token via /me; on failure the token is stale,
+  // so clear it and fall through to the login screen.
+  useEffect(() => {
+    let cancelled = false;
+    async function restore() {
+      const token = window.API.getToken && window.API.getToken();
+      if (!token) { setBooting(false); return; }
+      try {
+        const me = await window.API.me();               // validates the token
+        let ags = [];
+        try { ags = await window.API.getAgents(); } catch (_) {}
+        const as = ags.find((a) => a.id === me.id) || {
+          id: me.id, name: me.name, role: me.role, kind: "human",
+          color: "#D97757", initials: (me.name || "?").slice(0, 2).toUpperCase(),
+        };
+        // Agent tokens are the agt_live_ form; manager/passkey sessions are JWTs.
+        const viaToken = /^agt_live_/.test(token);
+        if (!cancelled) setAuth({ as, viaToken, agents: ags, me });
+      } catch (_) {
+        window.API.clearToken();
+      } finally {
+        if (!cancelled) setBooting(false);
+      }
+    }
+    restore();
+    return () => { cancelled = true; };
+  }, []); // once, on mount
+
   useEffect(() => {
     if (!auth) return;
 
@@ -700,6 +734,21 @@ function App() {
     setStories([]);
   };
 
+  // While validating a persisted token, hold off rendering Login to avoid a
+  // flash of the sign-in screen on every refresh.
+  if (booting) {
+    return (
+      <div className="login">
+        <div className="login__card" style={{ textAlign: "center" }}>
+          <div className="login__brand" style={{ justifyContent: "center" }}>
+            <span className="brandmark">▦</span>
+            <div><div className="brandname">Kanban</div><div className="brandsub">Restoring session…</div></div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   if (!auth) return <Login onAuth={(authData) => setAuth(authData)} />;
 
   // First-run onboarding for an admin with no projects yet.
@@ -894,6 +943,7 @@ function App() {
         <AdminPanel
           agents={agents}
           projects={projects}
+          onAgentsChange={setAgents}
           onClose={() => setShowAdmin(false)}
         />
       )}
