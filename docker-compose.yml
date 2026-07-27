@@ -60,6 +60,8 @@ services:
       - "4000:4000"
     volumes:
       - kanban_uploads:/data/uploads
+      # Serve the live AGENT_GUIDE.md via GET /api/agent-guide without a rebuild.
+      - ./docs/AGENT_GUIDE.md:/app/AGENT_GUIDE.md:ro
     depends_on:
       db:
         condition: service_healthy

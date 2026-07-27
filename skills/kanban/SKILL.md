@@ -94,6 +94,9 @@ Use `node kanban.mjs <subcommand>` or add `--json` for raw JSON output.
 | Block a task | `block <id> --on <blockerId>` (ticket) or `block <id> --reason "<text>"` (external) | `PATCH /tasks/:id` `{deps\|blocked_reason,_log}` |
 | Unblock a task | `unblock <id> --on <blockerId>` or `unblock <id>` (clears reason) | `PATCH /tasks/:id` |
 | Set branch + merge state | `branch <id> <branchName> <none\|dev\|pr\|merged>` | `PATCH /tasks/:id` `{branch,merge_state,_log}` |
+| Record a merge claim | `merged <id> <repo> <sha> [pr-url]` | posts the `MERGED` marker comment + appends `provenance`; best-effort `merge_state:'merged'` |
+| Set a task's type | `set-type <id> <code\|doc\|decision\|none>` | `PATCH /tasks/:id` `{type,_log}` |
+| List a task's provenance | `provenance <id>` | `GET /tasks/:id` → prints `provenance[]` |
 | Post a progress comment | `comment <id> <text>` | `POST /tasks/:id/comments` `{body}` |
 | Create a ticket | `new <projectId> <title> [--story id] [--id id] [--created ISO] [--assignee agentId]` | `POST /projects/:id/tasks` |
 | Bulk-create / import tasks | `bulk <projectId> <file.json\|->` (JSON array or `{tasks:[...]}`) | `POST /projects/:id/tasks/bulk` |
@@ -119,8 +122,25 @@ Good: `{"status":"in_progress","_log":"claude picked up this task"}`
 - `status`: `backlog` | `todo` | `in_progress` | `done`
 - `priority`: `critical` | `high` | `medium` | `low`
 - `merge_state`: `none` | `dev` | `pr` | `merged`
+- `type`: `code` | `doc` | `decision` | `none` (client-side alias for `null`)
 - Request actions: `accept` | `decline` | `start` | `done` | `cancel`
 - Request status flow: `incoming` → `accepted` → `in_progress` → `done` (or `declined`)
+
+**Merge marker convention, `type`, and provenance (KANBAN-900/901/904):** run `merged
+<id> <repo> <sha> [pr-url]` when you land a merge. It posts a comment whose first
+line is the canonical marker `MERGED <repo>@<sha> — <pr-url>` (space–em dash–space;
+omit the `— <pr-url>` tail if you have no PR link), appends a deduped
+`{repo,sha,url}` entry to the task's `provenance` array, and best-effort sets
+`merge_state:'merged'`. That marker+provenance write is your **claim**, not proof —
+`scripts/reconcile-merges.mjs` verifies it against the real repo and is the only
+thing that authoritatively sets `merge_state:'merged'` in environments where that
+field is reconciler-restricted (env `MERGE_ACTOR_IDS`; the CLI prints a note and
+exits 0 if you hit that 403, since the marker/provenance already landed). Set
+`type:'code'` (`set-type <id> code`) on tickets whose completion means "code
+merged somewhere" — `doc`/`decision` tickets don't need a merge to be `done`. Some
+deployments enforce a done-gate (env `MERGE_GATE_ENFORCED`, off by default): a
+`code` task can't go `status:done` until `merge_state:'merged'`; if you hit that,
+the API returns `409` and `status`/`cmdStatus` will surface the message.
 
 **Importing many tasks?** Use `bulk` (one transaction, ≤500/batch, idempotent on explicit id), not a loop of `new`. Looping single creates pays an auth check + several DB round-trips per task, so it self-throttles and can 500 a small server under concurrency. Build the project → epics → stories first so `story_id` references resolve.
 
@@ -159,6 +179,9 @@ node kanban.mjs block AWS-101 --on AWS-100        # AWS-101 is blocked by AWS-10
 node kanban.mjs block AWS-101 --reason "waiting on vendor SLA"
 node kanban.mjs unblock AWS-101 --on AWS-100      # or: unblock AWS-101 (clears the reason)
 node kanban.mjs branch AWS-101 feat/iam-bootstrap pr
+node kanban.mjs merged AWS-101 adam/kanban ad56090ff http://git.example.com/adam/kanban/pulls/4
+node kanban.mjs set-type AWS-101 code
+node kanban.mjs provenance AWS-101
 node kanban.mjs comment AWS-101 "Terraform plan looks clean, applying to dev"
 node kanban.mjs new aws "Rotate IAM access keys" --priority high --desc "90-day rotation"
 node kanban.mjs bulk aws ./import.json          # or:  cat import.json | node kanban.mjs bulk aws -

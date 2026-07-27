@@ -193,6 +193,7 @@ function App() {
   const [fPriority, setFPriority] = useState(null);
   const [fEpic, setFEpic] = useState(null);
   const [fBlocked, setFBlocked] = useState(null);   // null=all | 'blocked' | 'unblocked'
+  const [fMerge, setFMerge] = useState(null);       // null=all | 'unmerged' (done but not merged)
   const [openId, setOpenId] = useState(null);
   const [creating, setCreating] = useState(null); // {status} or {mode:'request'} or null
   const [view, setView] = useState("board"); // board | inbox
@@ -431,13 +432,14 @@ function App() {
         if (fBlocked === "blocked" && !blocked) return false;
         if (fBlocked === "unblocked" && blocked) return false;
       }
+      if (fMerge === "unmerged" && !(tk.status === "done" && tk.mergeState !== "merged")) return false;
       if (needle) {
         const hay = `${tk.id} ${tk.title} ${tk.desc} ${tk.notes}`.toLowerCase();
         if (!hay.includes(needle)) return false;
       }
       return true;
     });
-  }, [tasks, projectId, q, fAssignee, fPriority, fEpic, fBlocked, stories, epics]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [tasks, projectId, q, fAssignee, fPriority, fEpic, fBlocked, fMerge, stories, epics]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const prioRank = (p) => (window.PRIORITIES.find((x) => x.id === p) || {}).rank ?? 9;
   const sortFn = (a, b) => t.sortByPriority ? prioRank(a.priority) - prioRank(b.priority) : 0;
@@ -769,7 +771,7 @@ function App() {
   }
 
   const openTask = openId ? tasks.find((x) => x.id === openId) : null;
-  const activeFilters = (fAssignee !== null ? 1 : 0) + (fPriority ? 1 : 0) + (fEpic ? 1 : 0) + (fBlocked ? 1 : 0);
+  const activeFilters = (fAssignee !== null ? 1 : 0) + (fPriority ? 1 : 0) + (fEpic ? 1 : 0) + (fBlocked ? 1 : 0) + (fMerge ? 1 : 0);
   const myRequests = requests.filter((r) => r.fromProject === projectId || r.toProject === projectId);
   const inboxNew = requests.filter((r) => r.toProject === projectId && r.status === "incoming").length;
   const isAdmin = meInfo && meInfo.isAdmin;
@@ -879,11 +881,16 @@ function App() {
           <FilterChip label="Blocked" value={fBlocked} active={fBlocked ? (fBlocked === "blocked" ? "Blocked" : "Unblocked") : null}
             options={[{ value: "blocked", label: "Blocked only" }, { value: "unblocked", label: "Unblocked only" }]}
             onChange={setFBlocked} />
+          <button className={`fchip fchip--toggle ${fMerge === "unmerged" ? "is-on" : ""}`}
+            onClick={() => setFMerge(fMerge === "unmerged" ? null : "unmerged")}
+            title="Show only tasks marked done but not merged to main">
+            <Icon name="merge" size={14} /> Done, not merged
+          </button>
           <button className={`fchip fchip--toggle ${t.sortByPriority ? "is-on" : ""}`} onClick={() => setTweak("sortByPriority", !t.sortByPriority)}>
             <Icon name="sort" size={14} /> Sort by priority
           </button>
           {activeFilters > 0 && (
-            <button className="filterbar__clear" onClick={() => { setFAssignee(null); setFPriority(null); setFEpic(null); setFBlocked(null); }}>
+            <button className="filterbar__clear" onClick={() => { setFAssignee(null); setFPriority(null); setFEpic(null); setFBlocked(null); setFMerge(null); }}>
               Clear ({activeFilters})
             </button>
           )}

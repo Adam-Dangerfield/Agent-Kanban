@@ -39,6 +39,12 @@ function TaskCard({ task, epic, story, agent, blockedBy, waitingOn, density, opt
           })}
           {task.notes && <span className="tag tag--muted" title="Has notes"><Icon name="note" size={12} /></span>}
           {task.branch && <MergeBadge state={task.mergeState} compact />}
+          {task.mergeState === "merged" && (
+            <span className="tag tag--merged" title="Merged to main">✓ merged</span>
+          )}
+          {task.status === "done" && task.mergeState !== "merged" && (
+            <span className="tag tag--needsmerge" title="Done but not merged to main">⚠ not merged</span>
+          )}
           {task.comments && task.comments.length > 0 && (
             <span className="tag tag--muted" title={`${task.comments.length} message${task.comments.length > 1 ? "s" : ""}`}>
               <Icon name="message" size={12} />{task.comments.length}
@@ -100,6 +106,12 @@ function Column({ col, tasks, ctx, onDropTask, onOpen, dragId, setDragId, addInC
   );
 }
 
+// KANBAN-908: done but not merged to main — the predicate behind the card
+// "⚠ not merged" chip and the app-level "Done, not merged" filter (app.jsx).
+function needsMerge(task) {
+  return task.status === "done" && task.mergeState !== "merged";
+}
+
 function Board({ grouped, tasksByCol, ctx, onDropTask, onOpen, addInColumn }) {
   const [dragId, setDragId] = useState(null);
 
@@ -141,4 +153,4 @@ function Board({ grouped, tasksByCol, ctx, onDropTask, onOpen, addInColumn }) {
   );
 }
 
-Object.assign(window, { Board, TaskCard, Column, epicColor });
+Object.assign(window, { Board, TaskCard, Column, epicColor, needsMerge });

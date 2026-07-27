@@ -402,6 +402,17 @@ For everything else, use `PATCH` with the relevant field. Add `_log` to leave
 a human-readable line in the activity feed — **without `_log` no activity
 entry is written**.
 
+**Writes fail loud (since v1.5.1).** A `PATCH` (or create) with an
+**unrecognised field** returns `400` listing the accepted fields — it is no
+longer silently dropped as a `200`, so a successful write is always a write that
+did something. An **out-of-range enum value** (`status`, `priority`,
+`merge_state`, `type`) also returns `400` with the permitted set, not a `500`.
+You therefore don't need to read a task back just to confirm a `PATCH` applied:
+a `200` means every field you sent was accepted. Writable fields are `title`,
+`description`, `notes`, `status`, `priority`, `assignee_id`, `branch`,
+`merge_state`, `type`, `provenance`, `deps`, `story_id`, `project_id`,
+`blocked_reason` (plus the non-field `_log`). See §11 for the enum values.
+
 Mark done:
 
 ```bash
@@ -436,6 +447,51 @@ curl -s -X PATCH "http://localhost:4000/api/tasks/AWS-101" \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer $TOKEN" \
   -d '{"merge_state": "merged", "_log": "merged into main"}'
+```
+
+#### Merge marker, `type`, provenance, and the done-gate (KANBAN-900/901/904/905)
+
+Don't just flip `merge_state` yourself when you land a merge — record the claim
+properly, using the skill's `merged` subcommand:
+
+```bash
+node .claude/skills/kanban/scripts/kanban.mjs merged AWS-101 adam/kanban ad56090ff \
+  http://git.example.com/adam/kanban/pulls/4
+```
+
+This does three things in order: (1) posts a comment whose **first line is the
+canonical marker** `MERGED <repo>@<sha> — <pr-url>` (space–em dash–space
+separator; the `— <pr-url>` tail is omitted if you have no PR link) — e.g.
+`MERGED adam/kanban@ad56090ff — http://git.example.com/adam/kanban/pulls/4`;
+(2) appends a deduped `{repo,sha,url}` entry to the task's `provenance` array
+(`PATCH {provenance}`); (3) best-effort `PATCH {merge_state:'merged'}`.
+
+That marker + `provenance` write is your **claim**, not proof of a real merge —
+`scripts/reconcile-merges.mjs` independently verifies it against the repo and is
+the authoritative writer of `merge_state`. Some deployments restrict
+`merge_state:'merged'` to that reconciler only (env `MERGE_ACTOR_IDS`); if your
+own `PATCH {merge_state:'merged'}` gets a `403` there, that's expected — the
+marker/provenance already recorded your claim, so treat the 403 as informational,
+not an error. (The CLI's `merged` command handles this automatically and exits 0.)
+
+Set a task's `type` to `code` when "done" should mean "code merged somewhere"
+(`doc`/`decision` tasks don't need a merge):
+
+```bash
+node .claude/skills/kanban/scripts/kanban.mjs set-type AWS-101 code
+# or: curl -X PATCH .../tasks/AWS-101 -d '{"type":"code","_log":"type set to code"}'
+```
+
+Some deployments enforce a **done-gate** (env `MERGE_GATE_ENFORCED`, **off by
+default**): a `code`-typed task cannot go `status:'done'` until
+`merge_state:'merged'`. If enforced and you try anyway, `PATCH {status:'done'}`
+returns `409` with a message explaining the block — surface that message to
+whoever/whatever is waiting on the status change rather than retrying blindly.
+
+List a task's recorded provenance:
+
+```bash
+node .claude/skills/kanban/scripts/kanban.mjs provenance AWS-101
 ```
 
 ### 5d. Post a progress message (comment)
@@ -835,7 +891,21 @@ names (except attachment uploads which are `multipart/form-data`).
 | `none` | No branch yet (default) |
 | `dev` | Branch created, work in progress |
 | `pr` | Pull request open |
-| `merged` | Merged into main |
+| `merged` | Merged into main — may be reconciler-restricted; see §5c |
+
+### Task `type`
+
+| Value | Meaning |
+|---|---|
+| `null` (default) | Untyped |
+| `code` | Completion implies a merge; subject to the done-gate when `MERGE_GATE_ENFORCED` |
+| `doc` | Documentation work; no merge implied |
+| `decision` | A decision record; no merge implied |
+
+### Task `provenance`
+
+Array of `{repo, sha, url}` objects recording merge claims (see §5c). Written by
+`kanban.mjs merged` / `PATCH /api/tasks/:id {provenance}`; deduped by `repo+sha`.
 
 ### Request `status`
 

@@ -8,6 +8,73 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 _Nothing yet._
 
+## [1.5.1] — 2026-07-27
+
+Fail-loud write validation on tasks (requested by the `a-downstream-project` agent
+`an-agent` via `a-request` / `KANBAN-912`, items 1–2). No schema change.
+
+### Changed
+- **Unknown fields on `PATCH /api/tasks/:id` now return `400`** instead of being
+  silently dropped as a `200`. A write that did nothing is no longer
+  indistinguishable from a write that worked, so callers no longer need a
+  defensive read-back. The `400` names the offending key(s) and lists the
+  accepted writable fields. **Breaking** for any caller that was sending
+  stray/legacy keys (the UI and the `kanban` skill only send valid keys, so both
+  are unaffected).
+- **Invalid enum values (`status`, `priority`, `merge_state`, `type`) return
+  `400`** with the permitted set, on both create and `PATCH`, instead of
+  surfacing as a generic DB `500`. This makes client typos distinguishable from
+  real server faults in logs. Bulk create continues to report per-item enum
+  failures in its `errors[]` array.
+
+### Docs
+- `AGENT_GUIDE.md`, `API_CONTRACT.md`: documented the fail-loud write contract
+  (the unknown-key behaviour was previously undocumented — `an-agent`'s item 1).
+
+## [1.5.0] — 2026-07-27
+
+### Added
+- **Merge-gating & provenance** (epic `kanban-merge-gate`) — makes the rule
+  "a task can't be *done* until its code is actually merged" **enforceable and
+  machine-checkable** instead of convention-by-trust:
+  - **Task `type`** (`code` | `doc` | `decision` | `null`) so the gate applies
+    only to code work, and **`provenance`** — merged PRs/commits recorded on a
+    task as `[{repo, sha, url}]`. Backed by a new non-destructive migration
+    (`0004_task_type_provenance.sql`).
+  - **Done-gate** (KANBAN-904) — a `type=code` task cannot move to `done` unless
+    `merge_state='merged'` (`409` otherwise). **Off by default**; opt-in per
+    instance via `MERGE_GATE_ENFORCED`.
+  - **Anti-self-attestation** (KANBAN-905) — every `merge_state` change is written
+    to the activity feed with its actor, and setting `merge_state='merged'` can be
+    restricted to a designated reconciler via `MERGE_ACTOR_IDS` (unrestricted by
+    default). Verification is meant to come from the reconcile script, not an
+    agent asserting its own merge.
+  - **Merge marker convention** (KANBAN-900) — a canonical first-line comment
+    `MERGED <repo>@<sha> — <pr-url>`, documented in `CLAUDE.md` / `AGENT_GUIDE.md`.
+  - **`scripts/reconcile-merges.mjs`** (KANBAN-903) — verifies merges from local
+    git checkouts (`git merge-base --is-ancestor`), needs **no inbound network**;
+    sets `merge_state='merged'` + provenance, and reopens a task whose merge was
+    reverted (KANBAN-906).
+  - **`scripts/backfill-provenance.mjs`** (KANBAN-902) — idempotently parses
+    existing `MERGED` markers out of comments into `provenance`.
+  - **Board UI** (KANBAN-908) — a "✓ merged" / "⚠ not merged" chip on cards and a
+    "Done, not merged" filter in the filter bar; the detail panel gains a **Type**
+    control and a **Provenance** editor.
+  - **CLI verbs** — `kanban merged`, `kanban set-type`, `kanban provenance`.
+  - **Decision docs** — `docs/DECISION-merge-webhook.md` (KANBAN-907: defer the
+    webhook, keep the pull-based reconcile) and `docs/DECISION-blocked-status.md`
+    (KANBAN-909: keep "blocked" a derived overlay, solve clarity in the UI).
+- **`GET /api/agent-guide`** — returns the current `AGENT_GUIDE.md`
+  (`{ version, sha, bytes, updated_at, content }`, or raw markdown with
+  `?format=md`) so an agent can pull the latest instructions over the API without
+  a repo checkout. New `kanban guide` verb. Dev bind-mounts the live file; CI
+  bakes it into the api image (which must build from `./server`).
+
+### Notes
+- All merge-gating enforcement is **off by default** — deploying this release
+  changes no runtime behaviour until `MERGE_GATE_ENFORCED` / `MERGE_ACTOR_IDS`
+  are set in the environment.
+
 ## [1.4.1] — 2026-07-08
 
 ### Fixed
@@ -189,7 +256,8 @@ First public release.
   full API for AI agents.
 - **Docker Compose stack** — nginx (static) + Express API + PostgreSQL.
 
-[Unreleased]: https://github.com/Adam-Dangerfield/Agent-Kanban/compare/v1.4.1...HEAD
+[Unreleased]: https://github.com/Adam-Dangerfield/Agent-Kanban/compare/v1.5.0...HEAD
+[1.5.0]: https://github.com/Adam-Dangerfield/Agent-Kanban/compare/v1.4.1...v1.5.0
 [1.4.1]: https://github.com/Adam-Dangerfield/Agent-Kanban/compare/v1.4.0...v1.4.1
 [1.4.0]: https://github.com/Adam-Dangerfield/Agent-Kanban/compare/v1.3.1...v1.4.0
 [1.3.1]: https://github.com/Adam-Dangerfield/Agent-Kanban/compare/v1.3.0...v1.3.1

@@ -19,6 +19,55 @@ const seed = require('./seed-data');
 function clone(x) { return JSON.parse(JSON.stringify(x)); }
 
 // ============================================================
+//  Merge-gating config + rules (epic kanban-merge-gate).
+//
+//  Both are OFF by default, so shipping this code changes nothing until the
+//  environment opts in — a deliberate, backup-first rollout on prod.
+//    MERGE_GATE_ENFORCED=true   → a `type=code` task cannot go `done` unless
+//                                 its merge_state is 'merged' (KANBAN-904).
+//    MERGE_ACTOR_IDS=a,b,c      → only these actor ids may set
+//                                 merge_state='merged' (KANBAN-905). Empty =
+//                                 unrestricted (still audit-logged either way).
+//  Read live (not cached at module load) so tests/ops can toggle via env.
+// ============================================================
+function _mergeGateEnforced() {
+  return String(process.env.MERGE_GATE_ENFORCED || '').toLowerCase() === 'true';
+}
+function _mergeActorIds() {
+  return String(process.env.MERGE_ACTOR_IDS || '')
+    .split(',').map((s) => s.trim()).filter(Boolean);
+}
+
+// Throw if `patch` violates the merge rules against the pre-patch `current`
+// task. Shared by both stores so MemoryStore and PgStore stay in lockstep.
+// Error codes map to HTTP in the PATCH route: MERGE_ACTOR→403, MERGE_GATE→409.
+function _assertMergeRules(current, patch, actorId) {
+  // 905: restrict who can newly mark a task 'merged'.
+  const settingMerged = patch.merge_state === 'merged'
+    && (!current || current.merge_state !== 'merged');
+  if (settingMerged) {
+    const allow = _mergeActorIds();
+    if (allow.length && !allow.includes(actorId)) {
+      const e = new Error('only a designated reconciler may mark a task merged');
+      e.code = 'MERGE_ACTOR';
+      throw e;
+    }
+  }
+  // 904: a code task can't be marked done unless it's merged.
+  if (_mergeGateEnforced() && patch.status === 'done') {
+    const effType  = patch.type        !== undefined ? patch.type        : (current && current.type);
+    const effMerge = patch.merge_state !== undefined ? patch.merge_state : (current && current.merge_state);
+    if (effType === 'code' && effMerge !== 'merged') {
+      const e = new Error(
+        `task ${current ? current.id : ''} is type=code and not merged — cannot mark done`
+      );
+      e.code = 'MERGE_GATE';
+      throw e;
+    }
+  }
+}
+
+// ============================================================
 //  MemoryStore — zero-infra, fully synchronous (await-safe).
 // ============================================================
 class MemoryStore {
@@ -261,6 +310,8 @@ class MemoryStore {
       assignee_id:     data.assignee_id || null,
       branch:          data.branch      || null,
       merge_state:     data.merge_state || 'none',
+      type:            data.type        || null,
+      provenance:      data.provenance  || [],
       from_request_id: data.from_request_id || null,
       blocked_reason:  data.blocked_reason || null,
       deps:            data.deps || [],
@@ -295,7 +346,14 @@ class MemoryStore {
       const bad = this.wouldCreateCycle(id, patch.deps);
       if (bad) { const e = new Error(`dependency cycle: ${id} ↔ ${bad}`); e.code = 'CYCLE'; throw e; }
     }
+    _assertMergeRules(t, patch, actorId);
+    const prevMerge = t.merge_state;
     Object.assign(t, patch);
+    // Audit every merge_state change (KANBAN-905) so a 'merged' flip is always
+    // attributed in the activity feed, independent of the caller's _log.
+    if (patch.merge_state !== undefined && patch.merge_state !== prevMerge) {
+      this.log('task', id, actorId, `merge_state → ${patch.merge_state}`);
+    }
     if (logText) this.log('task', id, actorId, logText);
     if (patch.status === 'done') this._signalUnblocked(id, actorId);
     return this.hydrateTask(t);
@@ -861,7 +919,7 @@ class PgStore {
     const { rows } = await this._q(
       `SELECT id, project_id, story_id, title, description, notes,
               status, priority, assignee_id, branch, merge_state,
-              from_request_id, blocked_reason, created_at, updated_at
+              type, provenance, from_request_id, blocked_reason, created_at, updated_at
          FROM tasks WHERE project_id = $1 ORDER BY id`,
       [projectId]
     );
@@ -907,7 +965,7 @@ class PgStore {
     const { rows } = await this._q(
       `SELECT id, project_id, story_id, title, description, notes,
               status, priority, assignee_id, branch, merge_state,
-              from_request_id, blocked_reason, created_at, updated_at
+              type, provenance, from_request_id, blocked_reason, created_at, updated_at
          FROM tasks WHERE id = $1`,
       [id]
     );
@@ -956,8 +1014,8 @@ class PgStore {
   // 4 of them a parallel fan-out) was pure overhead on the hot insert path.
   static get _TASK_COLS() {
     return `id, project_id, story_id, title, description, notes,
-            status, priority, assignee_id, branch, merge_state, from_request_id,
-            blocked_reason, created_at, updated_at`;
+            status, priority, assignee_id, branch, merge_state, type, provenance,
+            from_request_id, blocked_reason, created_at, updated_at`;
   }
 
   // Insert one task + its deps + the "created" activity row on a single client
@@ -969,11 +1027,12 @@ class PgStore {
       // else COALESCE to now() so normal creates keep DB-default timestamps.
       `INSERT INTO tasks
          (id, project_id, story_id, title, description, notes,
-          status, priority, assignee_id, branch, merge_state, from_request_id,
-          blocked_reason, created_at, updated_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,
-               COALESCE($14::timestamptz, now()),
-               COALESCE($15::timestamptz, $14::timestamptz, now()))
+          status, priority, assignee_id, branch, merge_state, type, provenance,
+          from_request_id, blocked_reason, created_at, updated_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,
+               COALESCE($13::jsonb, '[]'::jsonb),$14,$15,
+               COALESCE($16::timestamptz, now()),
+               COALESCE($17::timestamptz, $16::timestamptz, now()))
        RETURNING ${PgStore._TASK_COLS}`,
       [
         id,
@@ -987,6 +1046,8 @@ class PgStore {
         data.assignee_id || null,
         data.branch      || null,
         data.merge_state || 'none',
+        data.type        || null,
+        data.provenance != null ? JSON.stringify(data.provenance) : null,
         data.from_request_id || null,
         data.blocked_reason || null,
         data.created_at || null,
@@ -1092,8 +1153,8 @@ class PgStore {
     const { deps, ...fields } = patch;
     const allowed = [
       'title', 'description', 'notes', 'status', 'priority',
-      'assignee_id', 'branch', 'merge_state', 'from_request_id',
-      'story_id', 'project_id', 'blocked_reason',
+      'assignee_id', 'branch', 'merge_state', 'type', 'provenance',
+      'from_request_id', 'story_id', 'project_id', 'blocked_reason',
     ];
 
     // Reject a dependency change that would create a cycle (A→B→…→A) before we
@@ -1103,10 +1164,22 @@ class PgStore {
       if (bad) { const e = new Error(`dependency cycle: ${id} ↔ ${bad}`); e.code = 'CYCLE'; throw e; }
     }
 
+    // Merge-gate / merge-actor rules need the pre-patch row (KANBAN-904/905).
+    // Only fetch it when a status→done or a merge_state change is in play.
+    let current = null;
+    if (fields.status === 'done' || fields.merge_state !== undefined) {
+      current = await this.task(id);
+      if (!current) return null;
+    }
+    _assertMergeRules(current, fields, actorId);
+
     const setCols = Object.keys(fields).filter((k) => allowed.includes(k));
     if (setCols.length > 0) {
-      const setClause = setCols.map((k, i) => `${k} = $${i + 2}`).join(', ');
-      const vals = setCols.map((k) => fields[k]);
+      // provenance is jsonb — stringify + cast; everything else binds directly.
+      const setClause = setCols
+        .map((k, i) => (k === 'provenance' ? `${k} = $${i + 2}::jsonb` : `${k} = $${i + 2}`))
+        .join(', ');
+      const vals = setCols.map((k) => (k === 'provenance' ? JSON.stringify(fields[k] || []) : fields[k]));
       const affected = await this._q(
         `UPDATE tasks SET ${setClause}, updated_at = now() WHERE id = $1`,
         [id, ...vals]
@@ -1115,6 +1188,11 @@ class PgStore {
     } else {
       const check = await this._q(`SELECT id FROM tasks WHERE id = $1`, [id]);
       if (check.rowCount === 0) return null;
+    }
+
+    // Audit every merge_state change (KANBAN-905), independent of _log.
+    if (fields.merge_state !== undefined && current && fields.merge_state !== current.merge_state) {
+      await this.log('task', id, actorId, `merge_state → ${fields.merge_state}`);
     }
 
     if (deps !== undefined) {

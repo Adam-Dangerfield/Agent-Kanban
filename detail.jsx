@@ -212,6 +212,73 @@ function BlockedByEditor({ task, ctx, onOpen, onSetDeps, writeOk }) {
   );
 }
 
+/* ---- Type options (KANBAN-901): single-word passthrough field, no translation --- */
+const TYPE_OPTIONS = [
+  { value: null, label: "—" },
+  { value: "code", label: "Code" },
+  { value: "doc", label: "Doc" },
+  { value: "decision", label: "Decision" },
+];
+
+/* ---- Provenance editor (KANBAN-901): list + add/remove entries -----------
+   task.provenance is an array of { repo, sha, url } that passes through the
+   api.js seam untouched. Dedupe by repo+sha; guard against a missing array. */
+function ProvenanceEditor({ task, onPatch, writeOk }) {
+  const [repo, setRepo] = useState("");
+  const [sha, setSha] = useState("");
+  const [url, setUrl] = useState("");
+  const [err, setErr] = useState("");
+  const entries = task.provenance || [];
+
+  const add = () => {
+    const r = repo.trim(), s = sha.trim(), u = url.trim();
+    if (!r || !s) { setErr("Repo and SHA are required."); return; }
+    if (entries.some((p) => p.repo === r && p.sha === s)) {
+      setErr("That repo@sha is already recorded.");
+      return;
+    }
+    setErr("");
+    const next = [...entries, { repo: r, sha: s, url: u || null }];
+    onPatch(task.id, { provenance: next }, `added provenance ${r}@${s}`);
+    setRepo(""); setSha(""); setUrl("");
+  };
+
+  const remove = (p) => {
+    const next = entries.filter((e) => !(e.repo === p.repo && e.sha === p.sha));
+    onPatch(task.id, { provenance: next }, `removed provenance ${p.repo}@${p.sha}`);
+  };
+
+  return (
+    <div className="prov">
+      {entries.length === 0 && <span className="muted deps__none">None</span>}
+      {entries.map((p) => (
+        <div key={`${p.repo}@${p.sha}`} className="deprow">
+          <Icon name="branch" size={13} />
+          <span className="deprow__t mono">
+            {p.url
+              ? <a className="prov__link" href={p.url} target="_blank" rel="noreferrer">{p.repo}@{p.sha}</a>
+              : `${p.repo}@${p.sha}`}
+          </span>
+          {writeOk && (
+            <button className="deprow__x" title="Remove provenance entry" onClick={() => remove(p)}>
+              <Icon name="x" size={12} />
+            </button>
+          )}
+        </div>
+      ))}
+      {err && <div className="deps__err">{err}</div>}
+      {writeOk && (
+        <div className="prov__add">
+          <input className="textin prov__in" placeholder="repo (org/name)" value={repo} onChange={(e) => setRepo(e.target.value)} />
+          <input className="textin prov__in mono" placeholder="sha" value={sha} onChange={(e) => setSha(e.target.value)} />
+          <input className="textin prov__in" placeholder="url (optional)" value={url} onChange={(e) => setUrl(e.target.value)} />
+          <button className="btn btn--ghost btn--sm" onClick={add}><Icon name="plus" size={13} /> Add</button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function DetailPanel({ task, ctx, currentUser, onClose, onPatch, onSetDeps, onComment, onOpen, onDelete, onUploadAttachment, onDeleteAttachment, canWrite }) {
   if (!task) return null;
   const epic = ctx.epicOf(task);
@@ -270,6 +337,12 @@ function DetailPanel({ task, ctx, currentUser, onClose, onPatch, onSetDeps, onCo
                 onChange={writeOk ? (v) => onPatch(task.id, { assignee: v }, v ? `assigned to ${ctx.agentOf(v).name}` : `unassigned`) : () => {}}
                 render={(o) => <span className="row-gap"><Avatar agent={o.agent} size={20} />{o.label}{o.agent && o.agent.kind === "agent" && <span className="tinytag">agent</span>}</span>} />
             </div>
+            <div className="prop">
+              <span className="prop__k">Type</span>
+              <Select value={task.type || null} width={200}
+                options={TYPE_OPTIONS}
+                onChange={writeOk ? (v) => onPatch(task.id, { type: v }, `set type → ${v || "none"}`) : () => {}} />
+            </div>
           </div>
 
           <Section title="Branch & merge" icon="branch">
@@ -286,7 +359,17 @@ function DetailPanel({ task, ctx, currentUser, onClose, onPatch, onSetDeps, onCo
                   onChange={writeOk ? (v) => onPatch(task.id, { mergeState: v }, mergeLog(v, task.branch)) : () => {}}
                   render={(o) => <span className="row-gap"><span className="git__dot" style={{ background: o.color }} />{o.label}</span>} />
               </div>
+              {task.mergeState === "merged" && (
+                <div className="git__row">
+                  <span className="git__k">&nbsp;</span>
+                  <MergeBadge state="merged" />
+                </div>
+              )}
             </div>
+          </Section>
+
+          <Section title={`Provenance${(task.provenance && task.provenance.length) ? ` · ${task.provenance.length}` : ""}`} icon="link">
+            <ProvenanceEditor task={task} onPatch={onPatch} writeOk={writeOk} />
           </Section>
 
           <Section title="Description">
@@ -570,4 +653,4 @@ function TicketForm({ project, defaults, ctx, onClose, onCreate }) {
   );
 }
 
-Object.assign(window, { DetailPanel, TicketForm, Select, EditableText, Section, AttachmentsSection, fmtBytes });
+Object.assign(window, { DetailPanel, TicketForm, Select, EditableText, Section, AttachmentsSection, fmtBytes, ProvenanceEditor, TYPE_OPTIONS });

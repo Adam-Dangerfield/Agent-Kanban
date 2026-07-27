@@ -95,6 +95,17 @@ its scope.
 | `activity` | `activity` | array; see Activity |
 | `attachments` | `attachments` | array; see Attachment — hydrated on all task GETs |
 
+**Write validation (v1.5.1, fail-loud).** On `POST`/`PATCH /api/tasks`:
+- An **unrecognised field** on `PATCH` → `400` (previously accepted and silently
+  dropped as `200`). Accepted writable fields: `title, description, notes,
+  status, priority, assignee_id, branch, merge_state, type, provenance, deps,
+  from_request_id, story_id, project_id, blocked_reason` (`_log` is a non-field
+  meta key, always allowed).
+- An **out-of-domain enum** for `status`, `priority`, `merge_state`, or `type` →
+  `400` with the permitted set (previously surfaced as a DB `500`). `type` may
+  also be `null`. Bulk create still reports per-item enum failures in its
+  `errors[]` array rather than a request-level `400`.
+
 ### Comment (agent message)
 | Frontend | API/DB | Notes |
 |---|---|---|
@@ -201,6 +212,9 @@ POST   /api/webauthn/authenticate/verify  { flow, response }
 GET    /api/me                                          -> { id, name, role, is_admin,
                                                             permissions:[{project_id,access}] }
 POST   /api/me/password  { current_password, new_password }  -> { ok }   [bearer; verifies current]
+GET    /api/agent-guide  [?format=md]                   -> { ok, version, sha, bytes,
+                                                            updated_at, content }  (raw markdown
+                                                            with ?format=md)  [bearer]
 
 # ---- Passkeys (enrol + manage; bearer) ---------------------------------
 POST   /api/webauthn/register/options                   -> { options, flow }

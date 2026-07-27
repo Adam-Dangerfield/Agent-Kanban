@@ -17,6 +17,8 @@ const cors    = require('cors');
 const jwt     = require('jsonwebtoken');
 const bcrypt  = require('bcryptjs');
 const crypto  = require('crypto');
+const fs      = require('fs');
+const path    = require('path');
 const multer  = require('multer');
 const {
   generateRegistrationOptions, verifyRegistrationResponse,
@@ -56,6 +58,29 @@ const authLimiter = rateLimit({
 const JWT_SECRET      = process.env.JWT_SECRET || 'dev-insecure-secret';
 const USE_PG          = !!process.env.DATABASE_URL;
 const PROVISION_TOKEN = process.env.PROVISION_TOKEN || '';
+
+// App version (served by GET /api/agent-guide so agents can detect changes).
+let APP_VERSION = '0.0.0';
+try { APP_VERSION = require('../package.json').version || APP_VERSION; } catch (_) {}
+
+// Resolve the AGENT_GUIDE.md to serve, first hit wins:
+//   1. AGENT_GUIDE_PATH env (explicit override),
+//   2. /app/AGENT_GUIDE.md bundled next to the app — dev bind-mounts the live
+//      docs file here; CI copies docs/AGENT_GUIDE.md into the build context so
+//      it bakes here in the image (the api image must build from ./server, so
+//      the file is brought in rather than the context widened),
+//   3. the repo layout docs/AGENT_GUIDE.md (no-docker dev + CI test runs).
+function _agentGuidePath() {
+  const candidates = [
+    process.env.AGENT_GUIDE_PATH,
+    path.join(__dirname, '..', 'AGENT_GUIDE.md'),
+    path.join(__dirname, '..', '..', 'docs', 'AGENT_GUIDE.md'),
+  ].filter(Boolean);
+  for (const p of candidates) {
+    try { if (fs.existsSync(p)) return p; } catch (_) { /* keep looking */ }
+  }
+  return null;
+}
 
 // ---- WebAuthn / passkey config ------------------------------
 // The relying-party origin/id must match the site the browser is on. Default
@@ -397,6 +422,35 @@ app.get('/api/me', async (req, res) => {
     });
   } catch (e) {
     console.error('GET /api/me', e);
+    return res.status(500).json({ error: 'internal error' });
+  }
+});
+
+// GET /api/agent-guide — the current AGENT_GUIDE.md, so an agent can pull the
+// latest instructions over the API without a repo checkout. Returns JSON with a
+// change-detection `sha` by default; `?format=md` returns raw markdown.
+//   → { ok, version, sha, bytes, updated_at, content }
+app.get('/api/agent-guide', (req, res) => {
+  try {
+    const p = _agentGuidePath();
+    if (!p) return res.status(404).json({ error: 'agent guide not available on this instance' });
+    const content = fs.readFileSync(p, 'utf8');
+    const stat    = fs.statSync(p);
+    const fmt = String(req.query.format || 'json').toLowerCase();
+    if (fmt === 'md' || fmt === 'markdown' || fmt === 'raw') {
+      res.setHeader('Content-Type', 'text/markdown; charset=utf-8');
+      return res.send(content);
+    }
+    return res.json({
+      ok:         true,
+      version:    APP_VERSION,
+      sha:        sha256(content),
+      bytes:      Buffer.byteLength(content, 'utf8'),
+      updated_at: stat.mtime.toISOString(),
+      content,
+    });
+  } catch (e) {
+    console.error('GET /api/agent-guide', e);
     return res.status(500).json({ error: 'internal error' });
   }
 });
@@ -877,6 +931,43 @@ app.get('/api/tasks/:id', async (req, res) => {
   } catch (e) { console.error(e); res.status(500).json({ error: 'internal error' }); }
 });
 
+// ---- task write validation (KANBAN-912: fail loud, don't silently drop) ----
+// Writable columns accepted on PATCH /api/tasks/:id. Anything else is a client
+// error and returns 400 (item 1) rather than a silent no-op 200 that a caller
+// can't distinguish from a real write. Kept in sync with PgStore.updateTask's
+// `allowed` list, plus `deps` (handled separately there).
+const TASK_PATCH_FIELDS = new Set([
+  'title', 'description', 'notes', 'status', 'priority', 'assignee_id',
+  'branch', 'merge_state', 'type', 'provenance', 'deps',
+  'from_request_id', 'story_id', 'project_id', 'blocked_reason',
+]);
+
+// Enum domains, mirrored from db/schema.sql. Validating here returns a 400 with
+// the permitted set (item 2) instead of letting a bad value surface as a DB
+// CHECK violation → generic 500 that's indistinguishable from a real fault.
+const TASK_ENUMS = {
+  status:      ['backlog', 'todo', 'in_progress', 'done'],
+  priority:    ['critical', 'high', 'medium', 'low'],
+  merge_state: ['none', 'dev', 'pr', 'merged'],
+  type:        ['code', 'doc', 'decision'], // null also allowed (untyped) — handled below
+};
+
+// Returns an error string if any enum-typed field carries an out-of-domain
+// value, else null. Undefined fields are skipped (partial PATCH); `type` may
+// also be null.
+function badTaskEnum(body) {
+  for (const k of Object.keys(TASK_ENUMS)) {
+    const v = body[k];
+    if (v === undefined) continue;
+    if (k === 'type' && v === null) continue;
+    if (!TASK_ENUMS[k].includes(v)) {
+      const suffix = k === 'type' ? ', or null' : '';
+      return `${k} must be one of: ${TASK_ENUMS[k].join(', ')}${suffix}`;
+    }
+  }
+  return null;
+}
+
 app.post('/api/projects/:id/tasks', async (req, res) => {
   try {
     if (!await canWrite(req.actor, req.isAdmin, req.params.id)) {
@@ -884,6 +975,8 @@ app.post('/api/projects/:id/tasks', async (req, res) => {
     }
     const project = await store.project(req.params.id);
     if (!project) return res.status(404).json({ error: 'unknown project' });
+    const enumErr = badTaskEnum(req.body || {});
+    if (enumErr) return res.status(400).json({ error: enumErr });
     const task = await store.createTask({ ...req.body, project_id: req.params.id }, req.actor);
     res.status(201).json(task);
   } catch (e) { console.error(e); res.status(500).json({ error: 'internal error' }); }
@@ -937,10 +1030,20 @@ app.patch('/api/tasks/:id', async (req, res) => {
       return res.status(403).json({ error: 'forbidden' });
     }
     const { _log, ...patch } = req.body;
+    const unknown = Object.keys(patch).filter((k) => !TASK_PATCH_FIELDS.has(k));
+    if (unknown.length) {
+      return res.status(400).json({
+        error: `unknown field(s): ${unknown.join(', ')}. allowed: ${[...TASK_PATCH_FIELDS].join(', ')}`,
+      });
+    }
+    const enumErr = badTaskEnum(patch);
+    if (enumErr) return res.status(400).json({ error: enumErr });
     const updated = await store.updateTask(req.params.id, patch, req.actor, _log);
     return updated ? res.json(updated) : res.status(404).json({ error: 'not found' });
   } catch (e) {
-    if (e && e.code === 'CYCLE') return res.status(400).json({ error: e.message });
+    if (e && e.code === 'CYCLE')       return res.status(400).json({ error: e.message });
+    if (e && e.code === 'MERGE_GATE')  return res.status(409).json({ error: e.message });
+    if (e && e.code === 'MERGE_ACTOR') return res.status(403).json({ error: e.message });
     console.error(e); res.status(500).json({ error: 'internal error' });
   }
 });

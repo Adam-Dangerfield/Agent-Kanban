@@ -28,3 +28,6 @@ Thumbs.db
 # The sanitised GitHub mirror is written to ../kanban-public by
 # scripts/prepare-public.sh; it lives outside the repo and is not tracked.
 # Nothing to ignore here — just a note.
+
+# Baked at build/CI time from docs/AGENT_GUIDE.md (served by GET /api/agent-guide)
+server/AGENT_GUIDE.md

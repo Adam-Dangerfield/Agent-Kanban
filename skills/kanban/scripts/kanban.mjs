@@ -13,6 +13,7 @@
  *
  * Subcommands:
  *   me                                     Show identity + permissions
+ *   guide [--out <file>]                   Fetch the latest AGENT_GUIDE.md (--json for metadata only)
  *   projects                               List readable projects
  *   tasks [projectId] [--status s] [--assignee a]   (projectId optional if KANBAN_PROJECT set)
  *                                          List tasks (client-side filters)
@@ -26,6 +27,12 @@
  *   unblock <id> [--on <blockerId>]        Remove a blocker (or clear the blocked reason if no --on)
  *   branch <id> <branch> <none|dev|pr|merged>
  *                                          Set branch name + merge state
+ *   merged <id> <repo> <sha> [pr-url]      Record a merge CLAIM: post the canonical MERGED marker
+ *                                          comment + append deduped provenance; best-effort marks
+ *                                          merge_state:'merged' (tolerates reconciler-restricted 403 —
+ *                                          run scripts/reconcile-merges.mjs to confirm authoritatively)
+ *   set-type <id> <code|doc|decision|none> Set a task's type (none clears it)
+ *   provenance <id>                        List a task's recorded provenance entries
  *   comment <id> <text...>                Post a comment
  *   new <projectId> <title...> [--priority p] [--desc d] [--status s] [--story id] [--id id] [--created ISO] [--assignee agentId]
  *                                          Create a task (--created backdates for imports; --assignee sets the owner)
@@ -309,6 +316,7 @@ Optional:          KANBAN_PROVISION_TOKEN (onboard only)
 
 Subcommands:
   me
+  guide [--out <file>]                              (fetch the latest AGENT_GUIDE.md; --json for metadata)
   projects
   tasks [projectId] [--status <s>] [--assignee <a>]   (projectId optional if KANBAN_PROJECT set)
   task <id>
@@ -317,6 +325,10 @@ Subcommands:
   block <id> --on <blockerId> | --reason "<text>"   (mark blocked by a ticket or a free-text reason)
   unblock <id> [--on <blockerId>]                   (remove a blocker, or clear the reason)
   branch <id> <branchName> <none|dev|pr|merged>
+  merged <id> <repo> <sha> [pr-url]                 (record a merge CLAIM: marker comment + provenance;
+                                                      best-effort merge_state, tolerates reconciler-only 403)
+  set-type <id> <code|doc|decision|none>
+  provenance <id>                                   (list recorded provenance entries)
   comment <id> <text...>
   new <projectId> <title...> [--priority <p>] [--desc <d>] [--status <s>] [--story <id>] [--id <id>] [--created <ISO>] [--assignee <agentId>]
   bulk <projectId> <file.json|->   (bulk-create tasks from JSON; chunks ≤500; idempotent — for imports)
@@ -351,6 +363,26 @@ async function cmdMe() {
   requireEnv();
   const data = await apiFetch('/me', { headers: authHeaders() });
   print(data);
+}
+
+// guide [--out <file>]  — fetch the latest AGENT_GUIDE.md over the API.
+// Prints the markdown to stdout (or --out <file>); with --json shows the
+// { version, sha, bytes, updated_at } envelope instead of the raw doc.
+async function cmdGuide(args) {
+  requireEnv();
+  const [outVal] = extractFlag(args, '--out');
+  const data = await apiFetch('/agent-guide', { headers: authHeaders() });
+  if (jsonMode) {
+    const { content: _c, ...meta } = data;
+    process.stdout.write(JSON.stringify(meta, null, 2) + '\n');
+    return;
+  }
+  if (outVal) {
+    writeFileSync(outVal, data.content);
+    process.stderr.write(`Wrote AGENT_GUIDE.md (v${data.version}, ${data.bytes} bytes) → ${outVal}\n`);
+  } else {
+    process.stdout.write(data.content);
+  }
 }
 
 async function cmdProjects() {
@@ -485,6 +517,112 @@ async function cmdBranch(args) {
     }),
   });
   print(data);
+}
+
+// merged <id> <repo> <sha> [pr-url] — record a merge CLAIM on a task:
+//   a. read existing provenance
+//   b. post the canonical "MERGED <repo>@<sha> — <pr-url>" marker comment
+//   c. PATCH provenance = existing + {repo,sha,url}, deduped by repo+sha
+//   d. best-effort PATCH merge_state:'merged' — tolerates a reconciler-restricted 403
+// This is the agent's CLAIM only; scripts/reconcile-merges.mjs verifies it and
+// authoritatively sets merge_state (the anti-self-attestation split, KANBAN-905).
+async function cmdMerged(args) {
+  requireEnv();
+  const [id, repo, sha, prUrl] = args;
+  if (!id || !repo || !sha) die('Usage: merged <id> <repo> <sha> [pr-url]');
+
+  // a. read existing provenance
+  const task = await apiFetch(`/tasks/${id}`, { headers: authHeaders() });
+  const existing = Array.isArray(task.provenance) ? task.provenance : [];
+
+  // b. post the canonical marker comment
+  const marker = prUrl ? `MERGED ${repo}@${sha} — ${prUrl}` : `MERGED ${repo}@${sha}`;
+  await apiFetch(`/tasks/${id}/comments`, {
+    method: 'POST',
+    headers: authHeaders({ 'Content-Type': 'application/json' }),
+    body: JSON.stringify({ body: marker }),
+  });
+  if (!jsonMode) process.stderr.write(`Posted marker comment: ${marker}\n`);
+
+  // c. PATCH provenance, deduped by repo+sha
+  const deduped = existing.filter(p => !(p.repo === repo && p.sha === sha));
+  deduped.push({ repo, sha, url: prUrl || '' });
+  const provTask = await apiFetch(`/tasks/${id}`, {
+    method: 'PATCH',
+    headers: authHeaders({ 'Content-Type': 'application/json' }),
+    body: JSON.stringify({ provenance: deduped, _log: `recorded merge provenance ${repo}@${sha}` }),
+  });
+  if (!jsonMode) process.stderr.write(`Recorded provenance: ${repo}@${sha}\n`);
+
+  // d. best-effort mark merge_state:'merged' — raw fetch (not apiFetch) so we can
+  // branch on a 403 without apiFetch's built-in "requires admin token" die().
+  const url = `${BASE}/tasks/${id}`;
+  let res;
+  try {
+    res = await fetch(url, {
+      method: 'PATCH',
+      headers: authHeaders({ 'Content-Type': 'application/json' }),
+      body: JSON.stringify({ merge_state: 'merged', _log: 'marked merged' }),
+    });
+  } catch (err) {
+    die(`Network error reaching ${url}: ${err.message}`);
+  }
+
+  if (res.status === 403) {
+    const note = 'merge_state is reconciler-restricted; marker + provenance recorded, run reconcile to confirm the merge';
+    if (jsonMode) {
+      process.stdout.write(JSON.stringify({ ok: true, warning: note, task: provTask }, null, 2) + '\n');
+    } else {
+      process.stdout.write(`${note}\n`);
+      process.stdout.write(format(provTask) + '\n');
+    }
+    process.exit(0);
+  }
+
+  if (!res.ok) {
+    let body = '';
+    try { body = await res.text(); } catch (_) {}
+    die(`HTTP ${res.status} ${res.statusText} — PATCH /tasks/${id}\n${body}`);
+  }
+
+  print(await res.json());
+}
+
+// set-type <id> <code|doc|decision|none> — PATCH task.type ("none" -> null)
+async function cmdSetType(args) {
+  requireEnv();
+  const [id, typeArg] = args;
+  const valid = ['code', 'doc', 'decision', 'none'];
+  if (!id || !typeArg) die('Usage: set-type <id> <code|doc|decision|none>');
+  if (!valid.includes(typeArg)) die(`Invalid type "${typeArg}". Valid: ${valid.join(', ')}`);
+  const type = typeArg === 'none' ? null : typeArg;
+  const data = await apiFetch(`/tasks/${id}`, {
+    method: 'PATCH',
+    headers: authHeaders({ 'Content-Type': 'application/json' }),
+    body: JSON.stringify({ type, _log: `type set to ${typeArg}` }),
+  });
+  print(data);
+}
+
+// provenance <id> — print a task's recorded provenance entries
+async function cmdProvenance(args) {
+  requireEnv();
+  const [id] = args;
+  if (!id) die('Usage: provenance <id>');
+  const task = await apiFetch(`/tasks/${id}`, { headers: authHeaders() });
+  const entries = Array.isArray(task.provenance) ? task.provenance : [];
+
+  if (jsonMode) {
+    print(entries);
+    return;
+  }
+  if (!entries.length) {
+    process.stdout.write('(none)\n');
+    return;
+  }
+  for (const p of entries) {
+    process.stdout.write(`${p.repo}@${p.sha}${p.url ? ' — ' + p.url : ''}\n`);
+  }
 }
 
 async function cmdComment(args) {
@@ -975,6 +1113,7 @@ async function cmdTokenRevoke(args) {
 // ── DISPATCH ───────────────────────────────────────────────────────────────
 const commands = {
   me:             () => cmdMe(),
+  guide:          () => cmdGuide(rest),
   projects:       () => cmdProjects(),
   tasks:          () => cmdTasks(rest),
   task:           () => cmdTask(rest),
@@ -983,6 +1122,9 @@ const commands = {
   block:          () => cmdBlock(rest),
   unblock:        () => cmdUnblock(rest),
   branch:         () => cmdBranch(rest),
+  merged:         () => cmdMerged(rest),
+  'set-type':     () => cmdSetType(rest),
+  provenance:     () => cmdProvenance(rest),
   comment:        () => cmdComment(rest),
   new:            () => cmdNew(rest),
   bulk:           () => cmdBulk(rest),

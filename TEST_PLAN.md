@@ -113,6 +113,25 @@ PASSES only if every case passes; the runner exits non-zero otherwise.
 > G17 is the keystone test: it proves the frontend is genuinely wired to the
 > API + DB and not running on the old in-memory mock.
 
+## H. Merge-gating & provenance (API) — KANBAN-910
+Task fields under test: `type` (`'code'|'doc'|'decision'|null`, default `null`)
+and `provenance` (`[{repo,sha,url}]`, default `[]`). H1–H6 are always-on (any
+stack). H7–H8 are **env-gated**: the default dev/test stack runs with the
+merge-gate feature flags OFF, so those two cases **skip cleanly** (not fail)
+unless run against a stack booted with the env vars below. A dedicated CI run
+with those vars set is required to actually exercise H7/H8.
+
+| ID | Case | Expected |
+|----|------|----------|
+| H1 | create task (minimal) | 201, `type===null`, `provenance===[]` |
+| H2 | `PATCH {type:"code"}` | 200, field set; `GET` reflects `type:"code"` |
+| H3 | `PATCH {type:"bogus"}` | 400 |
+| H4 | `POST .../tasks {type:"bogus"}` | 400 |
+| H5 | `PATCH {provenance:[{repo,sha,url}]}` then `GET` | round-trips the same array |
+| H6 | `PATCH {merge_state:"merged"}` (unrestricted) | 200, activity feed gains a line matching `merge_state → merged` |
+| H7 | *(env-gated: `MERGE_GATE_ENFORCED=true`)* `PATCH {status:"done"}` on unmerged `type:"code"` task | 409; same on a `type:"doc"` task | 200; same on a merged `type:"code"` task | 200. **Skipped** unless `MERGE_GATE_ENFORCED=true`. |
+| H8 | *(env-gated: `MERGE_ACTOR_IDS` set, excluding the acting agent)* `PATCH {merge_state:"merged"}` | 403. **Skipped** unless `MERGE_ACTOR_IDS` is set to a list that excludes `adam` (the manager actor used in this suite). |
+
 ---
 
 ## Running

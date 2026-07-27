@@ -1424,3 +1424,286 @@ describe('F. Store parity (in-memory mode)', () => {
     // the fragility risk. Skipping cleanly.
   });
 });
+
+// ---------------------------------------------------------------------------
+// H. Merge-gating & provenance (KANBAN-910)
+//
+// Task-level fields under test:
+//   - type:       'code' | 'doc' | 'decision' | null (default null)
+//   - provenance: [{repo, sha, url}, ...] (default [])
+//
+// Always-on behaviours (H1-H6) exercise the base contract, which is live on
+// every stack. Env-gated behaviours (H7, H8) only activate when the deploy
+// turns on the merge-gate / merge-actor-restriction feature flags; the
+// default dev/test stack runs with them OFF, so those two tests SKIP
+// (not fail) unless the env vars are present. See TEST_PLAN.md for the
+// dedicated CI run that sets them.
+//
+// All tasks are created in the 'data' project (per the file-level note on
+// the task-id counter bug) and are never deleted, so this suite cannot
+// trigger a count regression for later tests.
+// ---------------------------------------------------------------------------
+describe('H. Merge-gating & provenance', () => {
+  const suffix = String(Date.now()).slice(-6);
+
+  test('H1 create task (minimal) defaults: type=null, provenance=[]', async () => {
+    const { status, body } = await api('POST', '/projects/data/tasks', {
+      token: managerToken,
+      body: { title: `H1 defaults task ${suffix}` },
+    });
+    assert.equal(status, 201, `expected 201, got ${status}: ${JSON.stringify(body)}`);
+    assert.equal(body.type, null, 'default type is null');
+    assert.ok(Array.isArray(body.provenance), 'provenance is array');
+    assert.equal(body.provenance.length, 0, 'default provenance is empty array');
+  });
+
+  test('H2 PATCH {type:"code"} sets type; GET reflects it', async () => {
+    const { body: created } = await api('POST', '/projects/data/tasks', {
+      token: managerToken,
+      body: { title: `H2 type patch task ${suffix}` },
+    });
+    const taskId = created.id;
+    const { status, body } = await api('PATCH', `/tasks/${taskId}`, {
+      token: managerToken,
+      body: { type: 'code' },
+    });
+    assert.equal(status, 200, `expected 200, got ${status}: ${JSON.stringify(body)}`);
+    assert.equal(body.type, 'code', 'PATCH response reflects type=code');
+
+    const { status: gs, body: gt } = await api('GET', `/tasks/${taskId}`, { token: managerToken });
+    assert.equal(gs, 200);
+    assert.equal(gt.type, 'code', 'GET reflects persisted type=code');
+  });
+
+  test('H3 PATCH {type:"bogus"} returns 400', async () => {
+    const { body: created } = await api('POST', '/projects/data/tasks', {
+      token: managerToken,
+      body: { title: `H3 bad type patch task ${suffix}` },
+    });
+    const { status, body } = await api('PATCH', `/tasks/${created.id}`, {
+      token: managerToken,
+      body: { type: 'bogus' },
+    });
+    assert.equal(status, 400, `invalid type on PATCH must be 400, got ${status}: ${JSON.stringify(body)}`);
+  });
+
+  test('H4 POST create with {type:"bogus"} returns 400', async () => {
+    const { status, body } = await api('POST', '/projects/data/tasks', {
+      token: managerToken,
+      body: { title: `H4 bad type create task ${suffix}`, type: 'bogus' },
+    });
+    assert.equal(status, 400, `invalid type on create must be 400, got ${status}: ${JSON.stringify(body)}`);
+  });
+
+  test('H5 provenance round-trips through PATCH then GET', async () => {
+    const { body: created } = await api('POST', '/projects/data/tasks', {
+      token: managerToken,
+      body: { title: `H5 provenance task ${suffix}` },
+    });
+    const taskId = created.id;
+    const provenance = [{ repo: 'r', sha: 's', url: 'u' }];
+    const { status, body } = await api('PATCH', `/tasks/${taskId}`, {
+      token: managerToken,
+      body: { provenance },
+    });
+    assert.equal(status, 200, `expected 200, got ${status}: ${JSON.stringify(body)}`);
+    assert.deepEqual(body.provenance, provenance, 'PATCH response reflects provenance');
+
+    const { status: gs, body: gt } = await api('GET', `/tasks/${taskId}`, { token: managerToken });
+    assert.equal(gs, 200);
+    assert.deepEqual(gt.provenance, provenance, 'GET reflects persisted provenance');
+  });
+
+  test('H6 PATCH {merge_state:"merged"} (unrestricted) writes an audited activity entry', async () => {
+    const { body: created } = await api('POST', '/projects/data/tasks', {
+      token: managerToken,
+      body: { title: `H6 merge audit task ${suffix}` },
+    });
+    const taskId = created.id;
+    const { status, body } = await api('PATCH', `/tasks/${taskId}`, {
+      token: managerToken,
+      body: { merge_state: 'merged' },
+    });
+    assert.equal(status, 200, `expected 200, got ${status}: ${JSON.stringify(body)}`);
+    assert.equal(body.merge_state, 'merged', 'merge_state updated');
+    assert.ok(Array.isArray(body.activity), 'activity array present');
+    const entry = body.activity.find(a => /merge_state\s*(?:→|->)\s*merged/.test(a.text));
+    assert.ok(entry, `activity must contain a merge_state -> merged audit line, got: ${JSON.stringify(body.activity)}`);
+  });
+
+  // -------------------------------------------------------------------------
+  // Env-gated: only meaningful on a stack booted with MERGE_GATE_ENFORCED=true.
+  // -------------------------------------------------------------------------
+  test('H7 done-gate: unmerged type:code -> done is 409; type:doc -> done is 200; merged type:code -> done is 200', {
+    skip: process.env.MERGE_GATE_ENFORCED !== 'true' ? 'requires MERGE_GATE_ENFORCED=true' : false,
+  }, async () => {
+    // Unmerged code task -> 409 on status:done
+    const { body: codeTask } = await api('POST', '/projects/data/tasks', {
+      token: managerToken,
+      body: { title: `H7 unmerged code task ${suffix}`, type: 'code' },
+    });
+    const { status: s1, body: b1 } = await api('PATCH', `/tasks/${codeTask.id}`, {
+      token: managerToken,
+      body: { status: 'done' },
+    });
+    assert.equal(s1, 409, `unmerged type:code -> done must be 409, got ${s1}: ${JSON.stringify(b1)}`);
+
+    // doc task -> 200 on status:done (gate only applies to type:code)
+    const { body: docTask } = await api('POST', '/projects/data/tasks', {
+      token: managerToken,
+      body: { title: `H7 doc task ${suffix}`, type: 'doc' },
+    });
+    const { status: s2, body: b2 } = await api('PATCH', `/tasks/${docTask.id}`, {
+      token: managerToken,
+      body: { status: 'done' },
+    });
+    assert.equal(s2, 200, `type:doc -> done must be 200, got ${s2}: ${JSON.stringify(b2)}`);
+
+    // merged code task -> 200 on status:done
+    const { body: mergedCodeTask } = await api('POST', '/projects/data/tasks', {
+      token: managerToken,
+      body: { title: `H7 merged code task ${suffix}`, type: 'code' },
+    });
+    const { status: ms, body: mb } = await api('PATCH', `/tasks/${mergedCodeTask.id}`, {
+      token: managerToken,
+      body: { merge_state: 'merged' },
+    });
+    assert.equal(ms, 200, `setup: merge_state:merged must succeed, got ${ms}: ${JSON.stringify(mb)}`);
+    const { status: s3, body: b3 } = await api('PATCH', `/tasks/${mergedCodeTask.id}`, {
+      token: managerToken,
+      body: { status: 'done' },
+    });
+    assert.equal(s3, 200, `merged type:code -> done must be 200, got ${s3}: ${JSON.stringify(b3)}`);
+  });
+
+  // -------------------------------------------------------------------------
+  // Env-gated: only meaningful on a stack booted with MERGE_ACTOR_IDS set to a
+  // list that excludes the acting agent (manager/adam in this suite).
+  // -------------------------------------------------------------------------
+  const mergeActorIds = (process.env.MERGE_ACTOR_IDS || '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
+  const mergeActorGateActive = mergeActorIds.length > 0 && !mergeActorIds.includes('adam');
+
+  test('H8 merge-actor restriction: acting agent not in MERGE_ACTOR_IDS gets 403 on merge_state:"merged"', {
+    skip: mergeActorGateActive ? false : 'requires MERGE_ACTOR_IDS set (excluding adam, the acting agent in this test)',
+  }, async () => {
+    const { body: created } = await api('POST', '/projects/data/tasks', {
+      token: managerToken,
+      body: { title: `H8 merge actor restriction task ${suffix}`, type: 'code' },
+    });
+    const { status, body } = await api('PATCH', `/tasks/${created.id}`, {
+      token: managerToken,
+      body: { merge_state: 'merged' },
+    });
+    assert.equal(status, 403, `merge_state:merged from a non-allowed actor must be 403, got ${status}: ${JSON.stringify(body)}`);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// I. Agent guide endpoint (KANBAN-911)
+// ---------------------------------------------------------------------------
+describe('I. Agent guide', () => {
+  test('I1 GET /agent-guide returns the guide with version + sha', async () => {
+    const { status, body } = await api('GET', '/agent-guide', { token: managerToken });
+    assert.equal(status, 200, `expected 200, got ${status}: ${JSON.stringify(body)}`);
+    assert.equal(body.ok, true);
+    assert.ok(typeof body.version === 'string' && body.version.length > 0, 'version present');
+    assert.ok(typeof body.sha === 'string' && body.sha.length === 64, 'sha256 present');
+    assert.ok(typeof body.content === 'string' && body.content.length > 0, 'content present');
+    assert.equal(body.bytes, Buffer.byteLength(body.content, 'utf8'), 'bytes matches content length');
+  });
+
+  test('I2 GET /agent-guide requires a token', async () => {
+    const { status } = await api('GET', '/agent-guide');
+    assert.equal(status, 401, 'no token must be 401');
+  });
+
+  test('I3 ?format=md returns raw markdown', async () => {
+    const res = await fetch(`${BASE}/agent-guide?format=md`, {
+      headers: { Authorization: `Bearer ${managerToken}` },
+    });
+    assert.equal(res.status, 200);
+    assert.match(res.headers.get('content-type') || '', /text\/markdown/);
+    const text = await res.text();
+    assert.ok(text.length > 0, 'raw markdown body present');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// J. Write validation — fail loud (KANBAN-912, v1.5.1)
+//   Item 1: unknown keys on PATCH → 400 (were silently dropped as 200).
+//   Item 2: invalid enum values → 400 with the permitted set (were DB 500).
+//   PATCH targets AWS-101 (seed) with harmless/reverted values — no task
+//   creation, so no nextTaskId count regression.
+// ---------------------------------------------------------------------------
+describe('J. Write validation (fail loud)', () => {
+  test('J1 PATCH with an unknown key returns 400 naming the key', async () => {
+    const { status, body } = await api('PATCH', '/tasks/AWS-101', {
+      token: managerToken,
+      body: { titel: 'typo of title' },
+    });
+    assert.equal(status, 400, `expected 400, got ${status}: ${JSON.stringify(body)}`);
+    assert.match(body.error, /unknown field/i);
+    assert.match(body.error, /titel/);
+  });
+
+  test('J2 PATCH with an invalid status returns 400 (not 500) listing allowed', async () => {
+    const { status, body } = await api('PATCH', '/tasks/AWS-101', {
+      token: managerToken,
+      body: { status: 'in-progress' }, // hyphen, not the enum underscore form
+    });
+    assert.equal(status, 400, `expected 400, got ${status}: ${JSON.stringify(body)}`);
+    assert.match(body.error, /status must be one of/);
+    assert.match(body.error, /in_progress/);
+  });
+
+  test('J3 PATCH with an invalid priority returns 400', async () => {
+    const { status, body } = await api('PATCH', '/tasks/AWS-101', {
+      token: managerToken,
+      body: { priority: 'urgent' },
+    });
+    assert.equal(status, 400, `expected 400, got ${status}: ${JSON.stringify(body)}`);
+    assert.match(body.error, /priority must be one of/);
+  });
+
+  test('J4 PATCH with an invalid merge_state returns 400', async () => {
+    const { status, body } = await api('PATCH', '/tasks/AWS-101', {
+      token: managerToken,
+      body: { merge_state: 'shipped' },
+    });
+    assert.equal(status, 400, `expected 400, got ${status}: ${JSON.stringify(body)}`);
+    assert.match(body.error, /merge_state must be one of/);
+  });
+
+  test('J5 PATCH with valid fields + _log still succeeds (regression)', async () => {
+    const { status, body } = await api('PATCH', '/tasks/AWS-101', {
+      token: managerToken,
+      body: { priority: 'low', _log: 'validation regression check' },
+    });
+    assert.equal(status, 200, `expected 200, got ${status}: ${JSON.stringify(body)}`);
+    assert.equal(body.priority, 'low');
+    // restore so the suite stays order-independent
+    await api('PATCH', '/tasks/AWS-101', { token: managerToken, body: { priority: 'high' } });
+  });
+
+  test('J6 POST create with an invalid status returns 400', async () => {
+    const { status, body } = await api('POST', '/projects/data/tasks', {
+      token: managerToken,
+      body: { title: 'bad status create', status: 'nope' },
+    });
+    assert.equal(status, 400, `expected 400, got ${status}: ${JSON.stringify(body)}`);
+    assert.match(body.error, /status must be one of/);
+  });
+
+  test('J7 POST create with valid enums still returns 201', async () => {
+    const { status, body } = await api('POST', '/projects/data/tasks', {
+      token: managerToken,
+      body: { title: 'valid enum create', status: 'todo', priority: 'medium', type: 'doc' },
+    });
+    assert.equal(status, 201, `expected 201, got ${status}: ${JSON.stringify(body)}`);
+    assert.equal(body.status, 'todo');
+    assert.equal(body.type, 'doc');
+  });
+});

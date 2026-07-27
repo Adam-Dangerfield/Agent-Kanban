@@ -87,6 +87,8 @@ CREATE TABLE IF NOT EXISTS tasks (
   assignee_id  TEXT REFERENCES agents(id) ON DELETE SET NULL,
   branch       TEXT,                              -- git branch name
   merge_state  merge_state NOT NULL DEFAULT 'none',
+  type         TEXT,                              -- 'code' | 'doc' | 'decision' | NULL (ungated)
+  provenance   JSONB NOT NULL DEFAULT '[]'::jsonb, -- merged PRs/commits: [{repo,sha,url}]
   from_request_id TEXT,                           -- set if spawned from a request
   created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at   TIMESTAMPTZ NOT NULL DEFAULT now()
