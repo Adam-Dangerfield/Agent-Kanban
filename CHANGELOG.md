@@ -10,8 +10,8 @@ _Nothing yet._
 
 ## [1.5.1] — 2026-07-27
 
-Fail-loud write validation on tasks (requested by the `a-downstream-project` agent
-`an-agent` via `a-request` / `KANBAN-912`, items 1–2). No schema change.
+Fail-loud write validation on tasks (tracked as `KANBAN-912`, items 1–2). No
+schema change.
 
 ### Changed
 - **Unknown fields on `PATCH /api/tasks/:id` now return `400`** instead of being
@@ -29,7 +29,7 @@ Fail-loud write validation on tasks (requested by the `a-downstream-project` age
 
 ### Docs
 - `AGENT_GUIDE.md`, `API_CONTRACT.md`: documented the fail-loud write contract
-  (the unknown-key behaviour was previously undocumented — `an-agent`'s item 1).
+  (the unknown-key behaviour was previously undocumented — item 1).
 
 ## [1.5.0] — 2026-07-27
 
