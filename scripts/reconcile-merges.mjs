@@ -23,7 +23,7 @@
  * Examples:
  *   # Dry-run (default) — describe what would change, touch nothing:
  *   node scripts/reconcile-merges.mjs --project kanban \
- *     --repo adam/kanban=C:/Users/dev/Documents/VS\ Code\ Projects/Kanban
+ *     --repo adam/kanban=/path/to/Kanban
  *
  *   # Actually PATCH the board:
  *   node scripts/reconcile-merges.mjs --project kanban \
