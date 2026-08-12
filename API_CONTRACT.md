@@ -91,6 +91,7 @@ its scope.
 | `fromRequestId` | `from_request_id` | |
 | `deps` | `deps` | array of task ids (blocked-by). Settable on PATCH; a change that would create a cycle → `400` |
 | `blockedReason` | `blocked_reason` | free-text block (non-ticket), e.g. "waiting on vendor"; null when none |
+| `estimateMinutes` | `estimate_minutes` | human-time estimate in **minutes** (null = unestimated). UI presets: 15m/30m/1h/2h/4h/1d(480)/2d(960)/1wk(2400). API accepts any non-negative integer |
 | `comments` | `comments` | array; see Comment |
 | `activity` | `activity` | array; see Activity |
 | `attachments` | `attachments` | array; see Attachment — hydrated on all task GETs |
@@ -99,8 +100,10 @@ its scope.
 - An **unrecognised field** on `PATCH` → `400` (previously accepted and silently
   dropped as `200`). Accepted writable fields: `title, description, notes,
   status, priority, assignee_id, branch, merge_state, type, provenance, deps,
-  from_request_id, story_id, project_id, blocked_reason` (`_log` is a non-field
-  meta key, always allowed).
+  from_request_id, story_id, project_id, blocked_reason, estimate_minutes`
+  (`_log` is a non-field meta key, always allowed).
+- **`estimate_minutes`** must be `null` or a non-negative integer (minutes);
+  anything else → `400`.
 - An **out-of-domain enum** for `status`, `priority`, `merge_state`, or `type` →
   `400` with the permitted set (previously surfaced as a DB `500`). `type` may
   also be `null`. Bulk create still reports per-item enum failures in its

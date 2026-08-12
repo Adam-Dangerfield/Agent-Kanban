@@ -939,7 +939,7 @@ app.get('/api/tasks/:id', async (req, res) => {
 const TASK_PATCH_FIELDS = new Set([
   'title', 'description', 'notes', 'status', 'priority', 'assignee_id',
   'branch', 'merge_state', 'type', 'provenance', 'deps',
-  'from_request_id', 'story_id', 'project_id', 'blocked_reason',
+  'from_request_id', 'story_id', 'project_id', 'blocked_reason', 'estimate_minutes',
 ]);
 
 // Enum domains, mirrored from db/schema.sql. Validating here returns a 400 with
@@ -968,6 +968,19 @@ function badTaskEnum(body) {
   return null;
 }
 
+// estimate_minutes (KANBAN-913): human-time estimate. Must be null or a
+// non-negative integer number of minutes — reject negatives, non-integers,
+// NaN, and absurd values so a typo can't land silently.
+function badEstimate(body) {
+  if (!('estimate_minutes' in body)) return null;
+  const v = body.estimate_minutes;
+  if (v === null) return null;
+  if (typeof v !== 'number' || !Number.isInteger(v) || v < 0 || v > 1000000) {
+    return 'estimate_minutes must be null or a non-negative integer number of minutes';
+  }
+  return null;
+}
+
 app.post('/api/projects/:id/tasks', async (req, res) => {
   try {
     if (!await canWrite(req.actor, req.isAdmin, req.params.id)) {
@@ -977,6 +990,8 @@ app.post('/api/projects/:id/tasks', async (req, res) => {
     if (!project) return res.status(404).json({ error: 'unknown project' });
     const enumErr = badTaskEnum(req.body || {});
     if (enumErr) return res.status(400).json({ error: enumErr });
+    const estErr = badEstimate(req.body || {});
+    if (estErr) return res.status(400).json({ error: estErr });
     const task = await store.createTask({ ...req.body, project_id: req.params.id }, req.actor);
     res.status(201).json(task);
   } catch (e) { console.error(e); res.status(500).json({ error: 'internal error' }); }
@@ -1038,6 +1053,8 @@ app.patch('/api/tasks/:id', async (req, res) => {
     }
     const enumErr = badTaskEnum(patch);
     if (enumErr) return res.status(400).json({ error: enumErr });
+    const estErr = badEstimate(patch);
+    if (estErr) return res.status(400).json({ error: estErr });
     const updated = await store.updateTask(req.params.id, patch, req.actor, _log);
     return updated ? res.json(updated) : res.status(404).json({ error: 'not found' });
   } catch (e) {

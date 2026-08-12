@@ -332,4 +332,16 @@
     { id: "medium",   label: "Medium",   rank: 2, color: "#B5852A" },
     { id: "low",      label: "Low",      rank: 3, color: "#7C8B86" },
   ];
+  // Human-time estimate presets (KANBAN-913). Stored as minutes; 1d = 8h,
+  // 1wk = 5d. See fmtEstimate() in components.jsx for display + rollups.
+  window.ESTIMATES = [
+    { label: "15m", min: 15 },
+    { label: "30m", min: 30 },
+    { label: "1h",  min: 60 },
+    { label: "2h",  min: 120 },
+    { label: "4h",  min: 240 },
+    { label: "1d",  min: 480 },
+    { label: "2d",  min: 960 },
+    { label: "1wk", min: 2400 },
+  ];
 })();

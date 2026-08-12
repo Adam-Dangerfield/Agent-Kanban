@@ -220,6 +220,12 @@ const TYPE_OPTIONS = [
   { value: "decision", label: "Decision" },
 ];
 
+/* ---- Estimate options (KANBAN-913): human-time buckets, stored as minutes --- */
+const ESTIMATE_OPTIONS = [
+  { value: null, label: "—" },
+  ...window.ESTIMATES.map((e) => ({ value: e.min, label: e.label })),
+];
+
 /* ---- Provenance editor (KANBAN-901): list + add/remove entries -----------
    task.provenance is an array of { repo, sha, url } that passes through the
    api.js seam untouched. Dedupe by repo+sha; guard against a missing array. */
@@ -342,6 +348,13 @@ function DetailPanel({ task, ctx, currentUser, onClose, onPatch, onSetDeps, onCo
               <Select value={task.type || null} width={200}
                 options={TYPE_OPTIONS}
                 onChange={writeOk ? (v) => onPatch(task.id, { type: v }, `set type → ${v || "none"}`) : () => {}} />
+            </div>
+            <div className="prop">
+              <span className="prop__k">Estimate</span>
+              <Select value={task.estimateMinutes ?? null} width={200}
+                options={ESTIMATE_OPTIONS}
+                onChange={writeOk ? (v) => onPatch(task.id, { estimateMinutes: v }, `set estimate → ${v == null ? "none" : fmtEstimate(v)}`) : () => {}}
+                render={(o) => o.value == null ? o.label : <span className="row-gap"><Icon name="clock" size={13} /> {o.label}</span>} />
             </div>
           </div>
 

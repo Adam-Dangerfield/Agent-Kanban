@@ -312,6 +312,7 @@ class MemoryStore {
       merge_state:     data.merge_state || 'none',
       type:            data.type        || null,
       provenance:      data.provenance  || [],
+      estimate_minutes: data.estimate_minutes != null ? data.estimate_minutes : null,
       from_request_id: data.from_request_id || null,
       blocked_reason:  data.blocked_reason || null,
       deps:            data.deps || [],
@@ -919,7 +920,7 @@ class PgStore {
     const { rows } = await this._q(
       `SELECT id, project_id, story_id, title, description, notes,
               status, priority, assignee_id, branch, merge_state,
-              type, provenance, from_request_id, blocked_reason, created_at, updated_at
+              type, provenance, estimate_minutes, from_request_id, blocked_reason, created_at, updated_at
          FROM tasks WHERE project_id = $1 ORDER BY id`,
       [projectId]
     );
@@ -965,7 +966,7 @@ class PgStore {
     const { rows } = await this._q(
       `SELECT id, project_id, story_id, title, description, notes,
               status, priority, assignee_id, branch, merge_state,
-              type, provenance, from_request_id, blocked_reason, created_at, updated_at
+              type, provenance, estimate_minutes, from_request_id, blocked_reason, created_at, updated_at
          FROM tasks WHERE id = $1`,
       [id]
     );
@@ -1015,7 +1016,7 @@ class PgStore {
   static get _TASK_COLS() {
     return `id, project_id, story_id, title, description, notes,
             status, priority, assignee_id, branch, merge_state, type, provenance,
-            from_request_id, blocked_reason, created_at, updated_at`;
+            estimate_minutes, from_request_id, blocked_reason, created_at, updated_at`;
   }
 
   // Insert one task + its deps + the "created" activity row on a single client
@@ -1028,11 +1029,11 @@ class PgStore {
       `INSERT INTO tasks
          (id, project_id, story_id, title, description, notes,
           status, priority, assignee_id, branch, merge_state, type, provenance,
-          from_request_id, blocked_reason, created_at, updated_at)
+          from_request_id, blocked_reason, created_at, updated_at, estimate_minutes)
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,
                COALESCE($13::jsonb, '[]'::jsonb),$14,$15,
                COALESCE($16::timestamptz, now()),
-               COALESCE($17::timestamptz, $16::timestamptz, now()))
+               COALESCE($17::timestamptz, $16::timestamptz, now()), $18)
        RETURNING ${PgStore._TASK_COLS}`,
       [
         id,
@@ -1052,6 +1053,7 @@ class PgStore {
         data.blocked_reason || null,
         data.created_at || null,
         data.updated_at || null,
+        data.estimate_minutes != null ? data.estimate_minutes : null,
       ]
     );
     const deps = data.deps || [];
@@ -1154,7 +1156,7 @@ class PgStore {
     const allowed = [
       'title', 'description', 'notes', 'status', 'priority',
       'assignee_id', 'branch', 'merge_state', 'type', 'provenance',
-      'from_request_id', 'story_id', 'project_id', 'blocked_reason',
+      'from_request_id', 'story_id', 'project_id', 'blocked_reason', 'estimate_minutes',
     ];
 
     // Reject a dependency change that would create a cycle (A→B→…→A) before we

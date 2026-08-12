@@ -37,6 +37,9 @@ function TaskCard({ task, epic, story, agent, blockedBy, waitingOn, density, opt
               <Icon name="link" size={11} />waiting on {tp.key}
             </span>;
           })}
+          {task.estimateMinutes != null && (
+            <span className="tag tag--est" title="Estimated human time"><Icon name="clock" size={12} />{fmtEstimate(task.estimateMinutes)}</span>
+          )}
           {task.notes && <span className="tag tag--muted" title="Has notes"><Icon name="note" size={12} /></span>}
           {task.branch && <MergeBadge state={task.mergeState} compact />}
           {task.mergeState === "merged" && (
@@ -153,4 +156,93 @@ function Board({ grouped, tasksByCol, ctx, onDropTask, onOpen, addInColumn }) {
   );
 }
 
-Object.assign(window, { Board, TaskCard, Column, epicColor, needsMerge });
+/* ============================================================
+   Epics view: collapsible epic accordion with indented tickets
+   (an alternative to the kanban board; same filtered task set)
+   ============================================================ */
+
+function TicketRow({ task, ctx, onOpen }) {
+  const blockedBy = ctx.blockersOf(task);
+  const reason = (task.blockedReason || "").trim();
+  const blocked = blockedBy.length > 0 || !!reason;
+  const agent = ctx.agentOf(task.assignee);
+  return (
+    <div className="ticketrow" onClick={() => onOpen(task.id)} data-screen-label={`row ${task.id}`}>
+      <span className="ticketrow__id">{task.id}</span>
+      <StatusPill status={task.status} />
+      <PriorityBadge priority={task.priority} compact />
+      <span className="ticketrow__title">{task.title}</span>
+      <span className="ticketrow__chips">
+        {task.estimateMinutes != null && (
+          <span className="tag tag--est" title="Estimated human time"><Icon name="clock" size={12} />{fmtEstimate(task.estimateMinutes)}</span>
+        )}
+        {blocked && (
+          <span className="tag tag--blocked"
+            title={blockedBy.length ? `Blocked by ${blockedBy.join(", ")}${reason ? ` · ${reason}` : ""}` : `Blocked: ${reason}`}>
+            <Icon name="block" size={12} />{blockedBy.length ? blockedBy.length : "blocked"}
+          </span>
+        )}
+        {task.branch && <MergeBadge state={task.mergeState} compact />}
+        {task.mergeState === "merged" && <span className="tag tag--merged" title="Merged to main">✓ merged</span>}
+        {needsMerge(task) && <span className="tag tag--needsmerge" title="Done but not merged to main">⚠ not merged</span>}
+        {task.comments && task.comments.length > 0 && (
+          <span className="tag tag--muted" title={`${task.comments.length} message${task.comments.length > 1 ? "s" : ""}`}>
+            <Icon name="message" size={12} />{task.comments.length}
+          </span>
+        )}
+      </span>
+      <Avatar agent={agent} size={20} />
+    </div>
+  );
+}
+
+function EpicsView({ groups, ctx, onOpen }) {
+  const [collapsed, setCollapsed] = useState(() => new Set());
+  const toggle = (key) => setCollapsed((prev) => {
+    const next = new Set(prev);
+    next.has(key) ? next.delete(key) : next.add(key);
+    return next;
+  });
+
+  if (!groups.length) {
+    return <div className="epics epics--empty">No tickets match the current filters.</div>;
+  }
+
+  return (
+    <div className="epics">
+      {groups.map((g) => {
+        const key = g.epic ? g.epic.id : "none";
+        const open = !collapsed.has(key);
+        const totalMin = g.tasks.reduce((s, tk) => s + (tk.estimateMinutes || 0), 0);
+        return (
+          <section className={`epicgroup ${open ? "is-open" : ""}`} key={key}>
+            <header className="epicgroup__head" onClick={() => toggle(key)} data-screen-label={`epic ${key}`}>
+              <span className="epicgroup__chev"><Icon name={open ? "chevron-down" : "chevron-right"} size={16} /></span>
+              <span className="epicgroup__dot" style={{ background: epicColor(g.epic) }} />
+              <span className="epicgroup__title">{g.epic ? g.epic.title : "No epic"}</span>
+              <span className="epicgroup__count">{g.tasks.length}</span>
+              {totalMin > 0 && (
+                <span className="epicgroup__est" title="Total estimated human time for this epic"><Icon name="clock" size={12} /> ~{fmtEstimate(totalMin)}</span>
+              )}
+              <span className="epicgroup__bar">
+                {window.COLUMNS.map((c) => {
+                  const n = g.tasks.filter((tk) => tk.status === c.id).length;
+                  return n ? (
+                    <span key={c.id} className={`epicgroup__seg col__swatch--${c.id}`} title={`${c.label}: ${n}`}>{n}</span>
+                  ) : null;
+                })}
+              </span>
+            </header>
+            {open && (
+              <div className="epicgroup__body">
+                {g.tasks.map((tk) => <TicketRow key={tk.id} task={tk} ctx={ctx} onOpen={onOpen} />)}
+              </div>
+            )}
+          </section>
+        );
+      })}
+    </div>
+  );
+}
+
+Object.assign(window, { Board, TaskCard, Column, EpicsView, TicketRow, epicColor, needsMerge });

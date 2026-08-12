@@ -411,7 +411,10 @@ You therefore don't need to read a task back just to confirm a `PATCH` applied:
 a `200` means every field you sent was accepted. Writable fields are `title`,
 `description`, `notes`, `status`, `priority`, `assignee_id`, `branch`,
 `merge_state`, `type`, `provenance`, `deps`, `story_id`, `project_id`,
-`blocked_reason` (plus the non-field `_log`). See §11 for the enum values.
+`blocked_reason`, `estimate_minutes` (plus the non-field `_log`). See §11 for
+the enum values. `estimate_minutes` is a human-time estimate in minutes (`null`
+or a non-negative integer, e.g. `120` = 2h; the UI uses 15m/30m/1h/2h/4h/1d/2d/1wk
+presets where 1d = 480).
 
 Mark done:
 

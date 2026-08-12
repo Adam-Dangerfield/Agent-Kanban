@@ -23,6 +23,7 @@
     ["mergeState",    "merge_state"],
     ["fromRequestId", "from_request_id"],
     ["blockedReason", "blocked_reason"],
+    ["estimateMinutes", "estimate_minutes"],
     ["createdAt",     "created_at"],
     ["updatedAt",     "updated_at"],
   ];

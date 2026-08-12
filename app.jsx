@@ -467,6 +467,24 @@ function App() {
   }, [filtered, projectId, t.sortByPriority, epicsOfProject, stories]); // eslint-disable-line react-hooks/exhaustive-deps
   ctx.lanes = lanes;
 
+  // Epic accordion groups (Epics view): each epic → its filtered tickets,
+  // sorted by column order then priority. A trailing "No epic" bucket collects
+  // tickets whose story has no epic. Only non-empty groups are shown.
+  const colRank = (s) => window.COLUMNS.findIndex((c) => c.id === s);
+  const epicGroups = useMemo(() => {
+    const byEpic = {};
+    filtered.forEach((tk) => {
+      const st = stories.find((s) => s.id === tk.storyId);
+      const eid = st ? st.epicId : "none";
+      (byEpic[eid] = byEpic[eid] || []).push(tk);
+    });
+    Object.values(byEpic).forEach((arr) =>
+      arr.sort((a, b) => (colRank(a.status) - colRank(b.status)) || sortFn(a, b)));
+    const out = epicsOfProject.filter((e) => byEpic[e.id]).map((e) => ({ epic: e, tasks: byEpic[e.id] }));
+    if (byEpic["none"]) out.push({ epic: null, tasks: byEpic["none"] });
+    return out;
+  }, [filtered, epicsOfProject, stories, t.sortByPriority]); // eslint-disable-line react-hooks/exhaustive-deps
+
   // mutations
   const whoAmI = auth ? auth.as.id : null;
 
@@ -842,6 +860,9 @@ function App() {
               <button className={view === "board" ? "is-on" : ""} onClick={() => setView("board")}>
                 <Icon name="layout" size={14} /> Board
               </button>
+              <button className={view === "epics" ? "is-on" : ""} onClick={() => setView("epics")}>
+                <Icon name="list" size={14} /> Epics
+              </button>
               <button className={view === "inbox" ? "is-on" : ""} onClick={() => setView("inbox")}>
                 <Icon name="link" size={14} /> Inbox
                 {inboxNew > 0 && <span className="viewtabs__badge">{inboxNew}</span>}
@@ -849,7 +870,7 @@ function App() {
             </div>
           </div>
           <div className="topbar__tools">
-            {view === "board" && (
+            {(view === "board" || view === "epics") && (
               <div className="searchbox">
                 <Icon name="search" size={16} />
                 <input placeholder="Search tickets…" value={q} onChange={(e) => setQ(e.target.value)} />
@@ -864,7 +885,7 @@ function App() {
           </div>
         </header>
 
-        {view === "board" && (
+        {(view === "board" || view === "epics") && (
         <div className="filterbar">
           <span className="filterbar__lead"><Icon name="filter" size={14} /> Filter</span>
           <FilterChip label="Assignee" value={fAssignee} active={fAssignee !== null ? (ctx.agentOf(fAssignee)?.name || "Unassigned") : null}
@@ -907,6 +928,8 @@ function App() {
               onOpen={setOpenId}
               addInColumn={(status) => writeOk && setCreating({ status })}
             />
+          ) : view === "epics" ? (
+            <EpicsView groups={epicGroups} ctx={ctx} onOpen={setOpenId} />
           ) : (
             <InboxView project={project} requests={myRequests} ctx={ctx}
               onAction={requestAction} onOpenTask={(id) => { const tk = tasks.find((x) => x.id === id); const pid = tk && epicProject(tk); if (pid && pid !== projectId) setProjectId(pid); setView("board"); setOpenId(id); }}

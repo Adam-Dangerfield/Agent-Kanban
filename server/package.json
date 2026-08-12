@@ -1,6 +1,6 @@
 {
   "name": "kanban-api",
-  "version": "1.5.1",
+  "version": "1.6.0",
   "private": true,
   "description": "Backend API for the Kanban agent ticketing system",
   "main": "src/index.js",

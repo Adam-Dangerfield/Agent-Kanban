@@ -71,8 +71,10 @@ services:
     build:
       context: .
       dockerfile: web.Dockerfile
+    # Host port is overridable (KANBAN_WEB_PORT) so the stack can coexist with
+    # anything already on 8080; default stays 8080.
     ports:
-      - "8080:80"
+      - "${KANBAN_WEB_PORT:-8080}:80"
     depends_on:
       - api
 

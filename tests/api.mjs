@@ -1707,3 +1707,59 @@ describe('J. Write validation (fail loud)', () => {
     assert.equal(body.type, 'doc');
   });
 });
+
+// ---------------------------------------------------------------------------
+// K. Estimate (human-time, KANBAN-913) — estimate_minutes on tasks.
+//    Stored as minutes; API accepts null or a non-negative integer.
+// ---------------------------------------------------------------------------
+describe('K. Estimate (estimate_minutes)', () => {
+  let estId = null;
+
+  test('K1 POST create accepts estimate_minutes and echoes it', async () => {
+    const { status, body } = await api('POST', '/projects/data/tasks', {
+      token: managerToken,
+      body: { title: 'estimate on create', estimate_minutes: 120 },
+    });
+    assert.equal(status, 201, `expected 201, got ${status}: ${JSON.stringify(body)}`);
+    assert.equal(body.estimate_minutes, 120);
+    estId = body.id;
+  });
+
+  test('K2 PATCH updates estimate_minutes and GET reflects it', async () => {
+    const { status, body } = await api('PATCH', `/tasks/${estId}`, {
+      token: managerToken,
+      body: { estimate_minutes: 480 },
+    });
+    assert.equal(status, 200, `expected 200, got ${status}: ${JSON.stringify(body)}`);
+    assert.equal(body.estimate_minutes, 480);
+    const { body: got } = await api('GET', `/tasks/${estId}`, { token: managerToken });
+    assert.equal(got.estimate_minutes, 480, 'persisted estimate reads back');
+  });
+
+  test('K3 PATCH estimate_minutes:null clears it', async () => {
+    const { status, body } = await api('PATCH', `/tasks/${estId}`, {
+      token: managerToken,
+      body: { estimate_minutes: null },
+    });
+    assert.equal(status, 200, `expected 200, got ${status}: ${JSON.stringify(body)}`);
+    assert.equal(body.estimate_minutes, null);
+  });
+
+  test('K4 negative estimate_minutes returns 400', async () => {
+    const { status, body } = await api('PATCH', `/tasks/${estId}`, {
+      token: managerToken,
+      body: { estimate_minutes: -5 },
+    });
+    assert.equal(status, 400, `expected 400, got ${status}: ${JSON.stringify(body)}`);
+    assert.match(body.error, /estimate_minutes/);
+  });
+
+  test('K5 non-integer estimate_minutes returns 400', async () => {
+    const { status, body } = await api('PATCH', `/tasks/${estId}`, {
+      token: managerToken,
+      body: { estimate_minutes: '2h' },
+    });
+    assert.equal(status, 400, `expected 400, got ${status}: ${JSON.stringify(body)}`);
+    assert.match(body.error, /estimate_minutes/);
+  });
+});

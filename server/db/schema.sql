@@ -89,6 +89,7 @@ CREATE TABLE IF NOT EXISTS tasks (
   merge_state  merge_state NOT NULL DEFAULT 'none',
   type         TEXT,                              -- 'code' | 'doc' | 'decision' | NULL (ungated)
   provenance   JSONB NOT NULL DEFAULT '[]'::jsonb, -- merged PRs/commits: [{repo,sha,url}]
+  estimate_minutes INTEGER,                        -- human-time estimate in minutes (NULL = unestimated)
   from_request_id TEXT,                           -- set if spawned from a request
   created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at   TIMESTAMPTZ NOT NULL DEFAULT now()

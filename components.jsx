@@ -28,6 +28,7 @@ function Icon({ name, size = 16, stroke = 1.6, style }) {
     case "key":     return <svg {...p}><circle cx="8" cy="15" r="4"/><path d="M10.8 12.2 21 2m-4 0 3 3m-5 2 3 3"/></svg>;
     case "lock":    return <svg {...p}><rect x="4" y="10" width="16" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg>;
     case "layout":  return <svg {...p}><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16M15 4v16"/></svg>;
+    case "list":    return <svg {...p}><path d="M8 6h13M8 12h13M8 18h13"/><circle cx="3.5" cy="6" r="1"/><circle cx="3.5" cy="12" r="1"/><circle cx="3.5" cy="18" r="1"/></svg>;
     case "sliders": return <svg {...p}><path d="M4 7h10M18 7h2M4 17h2M10 17h10"/><circle cx="16" cy="7" r="2"/><circle cx="8" cy="17" r="2"/></svg>;
     case "arrow-up":  return <svg {...p}><path d="M12 19V5M6 11l6-6 6 6"/></svg>;
     case "sort":    return <svg {...p}><path d="M7 4v16m0 0-3-3m3 3 3-3M17 20V4m0 0-3 3m3-3 3 3"/></svg>;
@@ -103,6 +104,19 @@ function MergeBadge({ state, compact = false }) {
 function StatusPill({ status }) {
   const col = window.COLUMNS.find((c) => c.id === status);
   return <span className={`statuspill statuspill--${status}`}>{col ? col.label : status}</span>;
+}
+
+/* ---- estimate (human time) formatter ----------------------- */
+// minutes → compact human string. Workday = 8h (480m), week = 5d (2400m).
+// Trims trailing zeros: 120 → "2h", 90 → "1.5h", 600 → "1.25d", 15 → "15m".
+// Returns "" for null/0 so callers can omit the chip entirely.
+function fmtEstimate(min) {
+  if (min == null || min <= 0) return "";
+  const trim = (n) => Number(n.toFixed(2)).toString();
+  if (min < 60) return `${min}m`;
+  if (min < 480) return `${trim(min / 60)}h`;
+  if (min < 2400) return `${trim(min / 480)}d`;
+  return `${trim(min / 2400)}w`;
 }
 
 /* ---- relative time ----------------------------------------- */

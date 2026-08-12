@@ -8,6 +8,25 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 _Nothing yet._
 
+## [1.6.0] — 2026-08-11
+
+### Added
+- **Per-task human-time estimate** (`estimate_minutes`, KANBAN-913) — a
+  story-points equivalent that tracks how long a ticket would take a human.
+  Stored as an integer number of minutes (`null` = unestimated). New
+  non-destructive migration `0005_task_estimate.sql`.
+  - **UI**: a preset time-bucket dropdown in the ticket detail panel
+    (15m / 30m / 1h / 2h / 4h / 1d / 2d / 1wk; 1d = 8h, 1wk = 5d), an estimate
+    chip on board cards and epic-view rows, and a **per-epic rollup total** in
+    the Epics view header (e.g. `~1.5d`).
+  - **API**: `estimate_minutes` is accepted on create and `PATCH`; validated as
+    `null` or a non-negative integer (else `400`, consistent with the v1.5.1
+    fail-loud contract). Exposed through the `api.js` seam as `estimateMinutes`.
+- **Epics view** — a collapsible epic accordion as an alternative to the kanban
+  board (`Board | Epics | Inbox` tab). Each epic row folds to reveal its tickets
+  indented beneath, with a status-distribution bar and the estimate rollup.
+  Respects all existing filters and search.
+
 ## [1.5.1] — 2026-07-27
 
 Fail-loud write validation on tasks (tracked as `KANBAN-912`, items 1–2). No
