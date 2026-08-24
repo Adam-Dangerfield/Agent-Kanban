@@ -1763,3 +1763,21 @@ describe('K. Estimate (estimate_minutes)', () => {
     assert.match(body.error, /estimate_minutes/);
   });
 });
+
+// ---------------------------------------------------------------------------
+// L. Agent token entropy (KANBAN-915) — minted tokens are 256-bit.
+// ---------------------------------------------------------------------------
+describe('L. Agent token entropy', () => {
+  test('L1 minted agent token is agt_live_ + 64 hex (256-bit) and authenticates', async () => {
+    // Rotate a seeded agent's token via the root provision token.
+    const { status, body } = await api('POST', '/agents/scout/token', {
+      provisionToken: 'dev-provision-token',
+    });
+    assert.equal(status, 200, `expected 200, got ${status}: ${JSON.stringify(body)}`);
+    assert.match(body.token, /^agt_live_[0-9a-f]{64}$/, 'token must be agt_live_ + 64 hex');
+    // The freshly minted token works as a bearer credential.
+    const me = await api('GET', '/me', { token: body.token });
+    assert.equal(me.status, 200, `new token should authenticate, got ${me.status}`);
+    assert.equal(me.body.id, 'scout');
+  });
+});

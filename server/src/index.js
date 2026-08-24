@@ -92,6 +92,14 @@ try { RP_ID = process.env.WEBAUTHN_RP_ID || new URL(RP_ORIGIN).hostname; }
 catch (_) { RP_ID = 'localhost'; }
 const RP_NAME = process.env.WEBAUTHN_RP_NAME || 'Kanban';
 
+// MFA enforcement (KANBAN-914): when 'true', the manager's password login is
+// refused ONCE a passkey is enrolled — forcing the passkey (device possession +
+// user-verification = phishing-resistant MFA). OFF by default. Enforcing only
+// after a passkey exists means it can never lock the manager out before
+// enrolment. Recovery if a passkey device is lost: unset MFA_REQUIRED (env), or
+// delete the credential row, to restore password login.
+const MFA_REQUIRED = process.env.MFA_REQUIRED === 'true';
+
 // Sign a 7-day manager JWT for an agent id (shared by password + passkey login).
 function signSession(agent) {
   return jwt.sign({ sub: agent.id, role: agent.role }, JWT_SECRET, { expiresIn: '7d' });
@@ -118,14 +126,19 @@ function uploadSingle(req, res, next) {
 
 // ---- key generation helpers ---------------------------------
 
-// A new agent token: agt_live_<8 hex>. The 13-char prefix is the lookup key.
+// A new agent token: agt_live_<64 hex> = 256 bits of entropy (KANBAN-915).
+// The 13-char prefix (agt_live_ + 4 hex) is only a non-secret lookup/display
+// key; the bcrypt-hashed secret is the full 64-hex tail, so revealing the
+// prefix leaves ~240 bits unknown. (Was randomBytes(4) = 32 bits total, of
+// which the prefix exposed half — brute-forceable; that is the bug this fixes.)
 function genAgentToken() {
-  return `agt_live_${crypto.randomBytes(4).toString('hex')}`;
+  return `agt_live_${crypto.randomBytes(32).toString('hex')}`;
 }
 
-// A provision token: ptk_<24 hex>. The 13-char prefix is the lookup key.
+// A provision token: ptk_<64 hex> = 256 bits. These are high-privilege
+// (self-register agents + grant permissions up to scope), so full-strength.
 function genProvisionToken() {
-  return `ptk_${crypto.randomBytes(12).toString('hex')}`;
+  return `ptk_${crypto.randomBytes(32).toString('hex')}`;
 }
 
 // Sanitise a filename to safe characters only.
@@ -291,6 +304,21 @@ app.post('/api/auth/login', authLimiter, async (req, res) => {
     }
     if (!valid) return res.status(401).json({ ok: false, error: 'invalid credentials' });
 
+    // MFA enforcement: once the manager has enrolled a passkey and MFA is
+    // required, a correct password is not enough — they must complete the
+    // passkey (the mandated second factor). Bootstrap-safe: skipped while no
+    // passkey exists, so enabling this can't lock the manager out.
+    if (MFA_REQUIRED) {
+      const passkeys = await store.webauthnCredentialsForAgent(manager.id);
+      if (passkeys && passkeys.length > 0) {
+        return res.status(403).json({
+          ok: false,
+          code: 'MFA_PASSKEY_REQUIRED',
+          error: 'Multi-factor required — sign in with your passkey.',
+        });
+      }
+    }
+
     return res.json({
       ok: true,
       actor: { id: manager.id, name: manager.name, role: manager.role },
@@ -341,7 +369,7 @@ app.post('/api/webauthn/authenticate/options', authLimiter, async (req, res) => 
   try {
     const options = await generateAuthenticationOptions({
       rpID: RP_ID,
-      userVerification: 'preferred',
+      userVerification: 'required',
       // Empty allowCredentials => rely on discoverable (resident) passkeys, so
       // the user picks an account in the browser UI without typing a username.
     });
@@ -374,6 +402,7 @@ app.post('/api/webauthn/authenticate/verify', authLimiter, async (req, res) => {
       expectedChallenge,
       expectedOrigin: RP_ORIGIN,
       expectedRPID: RP_ID,
+      requireUserVerification: true,
       credential: {
         id: cred.id,
         publicKey: new Uint8Array(Buffer.from(cred.public_key, 'base64url')),
@@ -511,7 +540,7 @@ app.post('/api/webauthn/register/options', async (req, res) => {
       userDisplayName: agent.name || agent.id,
       attestationType: 'none',
       // Discoverable credential so the user can sign in without typing a username.
-      authenticatorSelection: { residentKey: 'preferred', userVerification: 'preferred' },
+      authenticatorSelection: { residentKey: 'preferred', userVerification: 'required' },
       excludeCredentials: existing.map((c) => ({ id: c.id, transports: c.transports || undefined })),
     });
     const flow = jwt.sign({ sub: agent.id, ch: options.challenge, typ: 'wa-reg' }, JWT_SECRET, { expiresIn: '5m' });
@@ -541,7 +570,7 @@ app.post('/api/webauthn/register/verify', async (req, res) => {
       expectedChallenge,
       expectedOrigin: RP_ORIGIN,
       expectedRPID: RP_ID,
-      requireUserVerification: false,
+      requireUserVerification: true,
     });
     if (!verification.verified || !verification.registrationInfo) {
       return res.status(400).json({ error: 'passkey registration failed' });

@@ -204,7 +204,11 @@ require `X-Provision-Token: <value>` as noted.
 ```
 # ---- Auth (open) -------------------------------------------------------
 POST   /api/auth/login            { password }          -> { ok, actor:{id,name,role}, token:<JWT> }
+#   403 { ok:false, code:'MFA_PASSKEY_REQUIRED' } when MFA_REQUIRED and the
+#   manager has a passkey enrolled — sign in via the passkey routes below instead.
 POST   /api/auth/token            { token }             -> { ok, actor:{id,name,role}, token:<raw> }
+#   Agent tokens are agt_live_<64 hex> (256-bit). Older 32-bit tokens still work
+#   until re-minted via POST /api/agents/:id/token — rotate them.
 
 # ---- Passkey sign-in (open; WebAuthn) ----------------------------------
 POST   /api/webauthn/authenticate/options               -> { options, flow }   [open]

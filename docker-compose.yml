@@ -53,6 +53,9 @@ services:
       # Dev/test: lenient auth rate limit so the suites (many logins per IP)
       # don't hit 429. Prod overrides this to a strict value.
       AUTH_RATE_MAX: ${AUTH_RATE_MAX:-100000}
+      # MFA: when 'true', the manager must use their passkey once one is enrolled
+      # (password-only login is refused). Off by default; see docs/AGENT_GUIDE / CLAUDE.md.
+      MFA_REQUIRED: ${MFA_REQUIRED:-false}
     # Apply pending DB migrations, then start the API. Idempotent + advisory-
     # locked, so it's safe on every boot (fresh or existing volume).
     command: ["sh", "-c", "node scripts/migrate.js && node src/index.js"]

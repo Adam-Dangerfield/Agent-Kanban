@@ -8,6 +8,30 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 _Nothing yet._
 
+## [1.7.0] — 2026-08-25
+
+Security hardening.
+
+### Added
+- **MFA enforcement for the manager** (`MFA_REQUIRED`, KANBAN-914) — leverages the
+  existing WebAuthn/passkey support. When enabled, `POST /api/auth/login` returns
+  `403 { code: 'MFA_PASSKEY_REQUIRED' }` for the manager **once a passkey is
+  enrolled**, forcing the passkey (device possession + user-verification =
+  phishing-resistant second factor). **Off by default**, and skipped until a
+  passkey exists, so it cannot lock the manager out before enrolment. Passkey
+  user-verification is now **required** end-to-end (options + verification), so a
+  passkey is a genuine second factor. Enable: enrol + test a passkey → set
+  `MFA_REQUIRED=true` → roll. Agents are out of scope (bearer tokens, not MFA).
+
+### Changed
+- **Agent + provision tokens are now 256-bit** (KANBAN-915) — `agt_live_<64 hex>`
+  / `ptk_<64 hex>`, from `crypto.randomBytes(32)`. The previous agent token was
+  `randomBytes(4)` = **32 bits**, and the shown `token_prefix` leaked half of it,
+  leaving ~16 bits of secret — brute-forceable. The prefix (non-secret lookup/
+  display key) now exposes a negligible fraction of a 240-bit tail. **Existing
+  tokens keep working until re-minted** — rotate them via
+  `POST /api/agents/:id/token`.
+
 ## [1.6.0] — 2026-08-11
 
 ### Added
