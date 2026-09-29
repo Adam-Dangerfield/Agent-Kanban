@@ -1,0 +1,10 @@
+{
+  "synthetic": true,
+  "product_id": "fictional-filter-1",
+  "claim": "One replacement lasts 90 days",
+  "sources": [
+    { "id": "manual", "statement": "Replace every 60 days", "version": "2" },
+    { "id": "store", "statement": "Up to 90 days", "version": "1" }
+  ],
+  "decision_needed": "Choose the authoritative source or defer until a new synthetic manual arrives."
+}

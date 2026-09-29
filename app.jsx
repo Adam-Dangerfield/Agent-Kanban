@@ -196,7 +196,7 @@ function App() {
   const [fMerge, setFMerge] = useState(null);       // null=all | 'unmerged' (done but not merged)
   const [openId, setOpenId] = useState(null);
   const [creating, setCreating] = useState(null); // {status} or {mode:'request'} or null
-  const [view, setView] = useState("board"); // board | inbox
+  const [view, setView] = useState("workflow"); // workflow | board | epics | inbox
 
   useEffect(() => { document.documentElement.style.setProperty("--accent", t.accent); }, [t.accent]);
 
@@ -400,7 +400,7 @@ function App() {
     const storyOf = (tk) => stories.find((s) => s.id === tk.storyId);
     const epicOf = (tk) => { const s = storyOf(tk); return s && epics.find((e) => e.id === s.epicId); };
     const agentOf = (id) => agents.find((a) => a.id === id) || null;
-    const blockersOf = (tk) => (tk.deps || []).filter((d) => { const dt = taskById(d); return dt && dt.status !== "done"; });
+    const blockersOf = (tk) => (tk.deps || []).filter((d) => { const dt = taskById(d); return !dt || dt.status !== "done"; });
     // A task is blocked if it has an open task-blocker OR a free-text reason.
     const isBlocked = (tk) => blockersOf(tk).length > 0 || !!(tk.blockedReason && tk.blockedReason.trim());
     const requestsForTask = (id) => requests.filter((r) => r.linkedTaskId === id);
@@ -427,7 +427,7 @@ function App() {
       if (fPriority && tk.priority !== fPriority) return false;
       if (fEpic) { const st = stories.find((s) => s.id === tk.storyId); if (!st || st.epicId !== fEpic) return false; }
       if (fBlocked) {
-        const blocked = (tk.deps || []).some((d) => { const dt = tasks.find((x) => x.id === d); return dt && dt.status !== "done"; })
+        const blocked = (tk.deps || []).some((d) => { const dt = tasks.find((x) => x.id === d); return !dt || dt.status !== "done"; })
           || !!(tk.blockedReason && tk.blockedReason.trim());
         if (fBlocked === "blocked" && !blocked) return false;
         if (fBlocked === "unblocked" && blocked) return false;
@@ -516,6 +516,17 @@ function App() {
     return updated;
   }, []);
 
+  const updateWorkflowTask = useCallback((updated) => {
+    setTasks((prev) => prev.map((task) => task.id === updated.id ? updated : task));
+    window.dispatchEvent(new Event("kanban:workflow-changed"));
+  }, []);
+
+  const workflowAction = useCallback(async (id, fields) => {
+    const updated = await window.API.workflowAction(id, fields);
+    updateWorkflowTask(updated);
+    return updated;
+  }, [updateWorkflowTask]);
+
   const addComment = useCallback((id, text) => {
     const body = text.trim();
     if (!body) return;
@@ -575,7 +586,7 @@ function App() {
   }, [tasks, whoAmI, canWrite]);
 
   const createTask = (form) => {
-    if (form.mode === "request") { createRequest(form); return; }
+    if (form.mode === "request") { return createRequest(form); }
     async function doCreate() {
       try {
         const fields = {
@@ -591,11 +602,14 @@ function App() {
         setTasks((prev) => [...prev, newTask]);
         setCreating(null);
         setOpenId(newTask.id);
+        window.dispatchEvent(new Event("kanban:workflow-changed"));
+        return newTask;
       } catch (ex) {
         console.error("createTask failed:", ex);
+        throw ex;
       }
     }
-    doCreate();
+    return doCreate();
   };
 
   const createRequest = (form) => {
@@ -794,6 +808,12 @@ function App() {
   const inboxNew = requests.filter((r) => r.toProject === projectId && r.status === "incoming").length;
   const isAdmin = meInfo && meInfo.isAdmin;
   const writeOk = canWrite(projectId);
+  const canAnswerWorkflow = !!(meInfo && !auth.viaToken && auth.as.kind === "human");
+  const openWorkflowTask = (task) => {
+    if (task.projectId && task.projectId !== projectId) setProjectId(task.projectId);
+    setView("board");
+    setOpenId(task.id);
+  };
 
   return (
     <div className={`app density-${t.density}`}>
@@ -854,9 +874,12 @@ function App() {
       <main className="main">
         <header className="topbar">
           <div className="topbar__title">
-            <span className="topbar__projkey" style={{ background: project.color }}>{project.key}</span>
-            <h1>{project.name}</h1>
+            {view !== "workflow" && <span className="topbar__projkey" style={{ background: project.color }}>{project.key}</span>}
+            <h1>{view === "workflow" ? "All projects" : project.name}</h1>
             <div className="viewtabs">
+              <button className={view === "workflow" ? "is-on" : ""} onClick={() => setView("workflow")}>
+                <Icon name="message" size={14} /> Workflow
+              </button>
               <button className={view === "board" ? "is-on" : ""} onClick={() => setView("board")}>
                 <Icon name="layout" size={14} /> Board
               </button>
@@ -869,7 +892,7 @@ function App() {
               </button>
             </div>
           </div>
-          <div className="topbar__tools">
+          {view !== "workflow" && <div className="topbar__tools">
             {(view === "board" || view === "epics") && (
               <div className="searchbox">
                 <Icon name="search" size={16} />
@@ -882,7 +905,7 @@ function App() {
                 <Icon name="plus" size={16} /> {view === "inbox" ? "New request" : "New"}
               </button>
             )}
-          </div>
+          </div>}
         </header>
 
         {(view === "board" || view === "epics") && (
@@ -919,7 +942,15 @@ function App() {
         )}
 
         <div className="boardwrap">
-          {view === "board" ? (
+          {view === "workflow" ? (
+            <WorkflowView
+              onOpenTask={openWorkflowTask}
+              onTaskUpdate={updateWorkflowTask}
+              canAnswer={canAnswerWorkflow}
+              canCreate={writeOk}
+              onNewTask={() => writeOk && setCreating({ status: "todo" })}
+            />
+          ) : view === "board" ? (
             <Board
               grouped={t.layout === "swimlanes"}
               tasksByCol={tasksByCol}
@@ -954,6 +985,7 @@ function App() {
           onUploadAttachment={uploadTaskAttachment}
           onDeleteAttachment={deleteTaskAttachment}
           canWrite={writeOk}
+          onWorkflowAction={workflowAction}
         />
       )}
       {creating && <TicketForm project={project} defaults={creating} ctx={ctx} onClose={() => setCreating(null)} onCreate={createTask} />}

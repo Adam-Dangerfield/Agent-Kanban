@@ -26,6 +26,7 @@ const {
 } = require('@simplewebauthn/server');
 const { store }   = require('./store');
 const { storage } = require('./storage');
+const { buildWorkflowQueues } = require('./workflow');
 
 const app = express();
 
@@ -37,6 +38,20 @@ app.set('trust proxy', 1);
 const allowedOrigin = process.env.WEB_ORIGIN || 'http://localhost:8080';
 app.use(cors({ origin: allowedOrigin, credentials: true }));
 app.use(express.json());
+
+// Lokalny panel korzysta wyłącznie z jawnej listy plików interfejsu.
+if (process.env.SERVE_WEB === 'true') {
+  const webFiles = new Set([
+    'Kanban.html', 'data.js', 'api.js', 'styles.css', 'account.jsx',
+    'tweaks-panel.jsx', 'components.jsx', 'board.jsx', 'detail.jsx',
+    'requests.jsx', 'admin.jsx', 'setup.jsx', 'app.jsx', 'workflow.jsx',
+  ]);
+  const webRoot = path.resolve(__dirname, '..', '..');
+  app.get('/', (_req, res) => res.sendFile(path.join(webRoot, 'Kanban.html')));
+  for (const filename of webFiles) {
+    app.get(`/${filename}`, (_req, res) => res.sendFile(path.join(webRoot, filename)));
+  }
+}
 
 // ---- auth brute-force throttle ------------------------------
 // The login/token endpoints are public (you submit credentials there), so
@@ -940,6 +955,19 @@ app.post('/api/epics/:id/stories', async (req, res) => {
 // ============================================================
 //  TASKS
 // ============================================================
+app.get('/api/workflow', async (req, res) => {
+  try {
+    const [tasks, readableProjects] = await Promise.all([
+      store.listWorkflowTasks(),
+      store.readableProjectIds(req.actor, req.isAdmin),
+    ]);
+    res.json(buildWorkflowQueues(tasks, readableProjects));
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'internal error' });
+  }
+});
+
 app.get('/api/projects/:id/tasks', async (req, res) => {
   try {
     if (!await canRead(req.actor, req.isAdmin, req.params.id)) {
@@ -958,6 +986,27 @@ app.get('/api/tasks/:id', async (req, res) => {
     }
     return res.json(t);
   } catch (e) { console.error(e); res.status(500).json({ error: 'internal error' }); }
+});
+
+app.post('/api/tasks/:id/workflow', async (req, res) => {
+  try {
+    const task = await store.task(req.params.id);
+    if (!task) return res.status(404).json({ error: 'not found' });
+    if (!await canWrite(req.actor, req.isAdmin, task.project_id)) {
+      return res.status(403).json({ error: 'forbidden' });
+    }
+    const actor = await store.agent(req.actor);
+    const updated = await store.applyWorkflowAction(
+      req.params.id, req.body, req.actor, actor && actor.kind
+    );
+    return res.json(updated);
+  } catch (error) {
+    if (error.code === 'WORKFLOW_INVALID') return res.status(400).json({ error: error.message });
+    if (error.code === 'WORKFLOW_CONFLICT') return res.status(409).json({ error: error.message });
+    if (error.code === 'WORKFLOW_FORBIDDEN') return res.status(403).json({ error: error.message });
+    console.error(error);
+    return res.status(500).json({ error: 'internal error' });
+  }
 });
 
 // ---- task write validation (KANBAN-912: fail loud, don't silently drop) ----
@@ -1345,6 +1394,7 @@ function _cappedAccess(requestedAccess, projectId, isAdmin, prov) {
 
 // ============================================================
 const PORT = process.env.PORT || 4000;
-app.listen(PORT, () => console.log(`Kanban API listening on :${PORT}`));
+const HOST = process.env.HOST;
+app.listen(PORT, HOST, () => console.log(`Kanban API listening on ${HOST || 'all interfaces'}:${PORT}`));
 
 module.exports = app;

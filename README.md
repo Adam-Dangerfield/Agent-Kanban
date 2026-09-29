@@ -1,5 +1,59 @@
 # Kanban — Self-Hosted Agent Task Tracker
 
+## Lokalna próba pracy prowadzonej rozmową
+
+Adaptacja dodaje globalny widok **Workflow**: pracę gotową, sprawy do rozmowy,
+pracę aktywną i karty odłożone. Zakończenie zadania jest niezależne od omówienia
+wyniku. Odpowiedź lub omówienie dotyczy konkretnej wersji; późniejsza publikacja
+wraca do kolejki. Odłożenie wymaga powodu i terminu lub warunku, a powrót jest jawny.
+
+Wymagania: Node.js ≥20, lokalne narzędzia PostgreSQL (`initdb`, `pg_ctl`) i `tmux` w PATH.
+Przed pierwszym uruchomieniem wykonaj `npm ci --prefix server` oraz `npm ci` dla testów.
+
+```bash
+node scripts/local-pilot.mjs start
+node scripts/local-pilot.mjs status
+node scripts/local-pilot.mjs copy-password
+```
+
+Otwórz [lokalny panel](http://127.0.0.1:45441), wklej hasło ze schowka w **Manager**.
+Polecenie `copy-password` korzysta z macOS `pbcopy`; nie wypisuje hasła.
+Środowisko tworzy trzy syntetyczne projekty i konto orkiestratora.
+Start jest niedestrukcyjny; `stop` zatrzymuje usługi, `restart` sprawdza ciągłość.
+Dane i prywatne pliki pozostają w `tmp/practice/` (poza Git), PostgreSQL nasłuchuje
+na `127.0.0.1:55441`, API i panel na `127.0.0.1:45441`. Sesja tmux: `agent-kanban-practice`.
+Nie uruchamiaj upstreamowego seedowania na tej bazie — kasuje dane.
+Panel nadal pobiera React/Babel z CDN, więc pierwsze otwarcie wymaga internetu.
+
+Obsługa przez orkiestratora:
+
+```bash
+node scripts/conversation.mjs queues
+node scripts/conversation.mjs next
+node scripts/conversation.mjs next work
+node scripts/conversation.mjs help
+```
+
+CLI domyślnie używa konta agenta i prywatnego profilu `tmp/practice/client.json`.
+`--human` służy wyłącznie do zapisu rzeczywistej odpowiedzi użytkownika lub faktycznego
+omówienia. Nie wolno go używać do automatycznego akceptowania propozycji.
+Samo `next` tylko odczytuje kartę. Wszystkie mutacje workflow wymagają `--revision N`
+z ostatnio odczytanej karty; konflikt wymaga ponownego odczytu, nie zgadywania wersji.
+
+Testy adaptacji (na działającym środowisku lokalnym):
+
+```bash
+node --test tests/conversation-cli.test.mjs tests/workflow-rules.mjs tests/workflow-ui.mjs
+node tests/practice-e2e.mjs
+node tests/practice-ui.mjs
+```
+
+Test praktyczny restartuje własne API i PostgreSQL; nie uruchamiaj go podczas rozmowy.
+Test przeglądarki wymaga Chromium Playwright lub `PLAYWRIGHT_EXECUTABLE_PATH`.
+Scenariusz pierwszego odbioru: [instrukcja próby](docs/working/practice_20260930.md).
+
+---
+
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](https://www.gnu.org/licenses/agpl-3.0)
 
 > **Status: working personal tool.** A self-hosted coordination layer between AI

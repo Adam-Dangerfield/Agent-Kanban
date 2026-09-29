@@ -15,6 +15,10 @@
  * ========================================================== */
 
 const seed = require('./seed-data');
+const {
+  defaultWorkflow, normalizeWorkflow, applyWorkflowAction,
+  isClaimBlocked, workflowActivityText,
+} = require('./workflow');
 
 function clone(x) { return JSON.parse(JSON.stringify(x)); }
 
@@ -263,6 +267,10 @@ class MemoryStore {
       .map((t) => this.hydrateTask(t));
   }
 
+  listWorkflowTasks() {
+    return this.tasks.map((task) => this.hydrateTask(task));
+  }
+
   task(id) {
     const t = this.tasks.find((x) => x.id === id);
     return t ? this.hydrateTask(t) : null;
@@ -271,6 +279,7 @@ class MemoryStore {
   hydrateTask(t) {
     return {
       ...t,
+      workflow:    normalizeWorkflow(t.workflow),
       comments:    this.comments.filter((c) => c.task_id === t.id),
       activity:    this.activity.filter((a) => a.entity_type === 'task' && a.entity_id === t.id),
       attachments: this._attachments
@@ -319,6 +328,7 @@ class MemoryStore {
       from_request_id: data.from_request_id || null,
       blocked_reason:  data.blocked_reason || null,
       deps:            data.deps || [],
+      workflow:        defaultWorkflow(),
       created_at:      data.created_at || now,
       updated_at:      data.updated_at || data.created_at || now,
     };
@@ -371,10 +381,21 @@ class MemoryStore {
     const t = this.tasks.find((x) => x.id === id);
     if (!t) return null;
     if (t.assignee_id != null) return null;
+    if (isClaimBlocked(t.workflow)) return null;
     t.assignee_id = assigneeId;
     t.status = 'in_progress';
     if (logText) this.log('task', id, actorId, logText);
     return this.hydrateTask(t);
+  }
+
+  applyWorkflowAction(id, input, actorId, actorKind) {
+    const task = this.tasks.find((item) => item.id === id);
+    if (!task) return null;
+    const updated = applyWorkflowAction(task.workflow, input, actorKind);
+    task.workflow = updated;
+    task.updated_at = new Date().toISOString();
+    this.log('task', id, actorId, workflowActivityText(input.action, updated));
+    return this.hydrateTask(task);
   }
 
   // Mirror of PgStore.wouldCreateCycle over the in-memory task.deps graph.
@@ -633,6 +654,7 @@ class PgStore {
     ]);
     return {
       ...row,
+      workflow:    normalizeWorkflow(row.workflow),
       deps:        depsRes.rows.map((r) => r.depends_on),
       comments:    commentsRes.rows,
       activity:    activityRes.rows,
@@ -924,7 +946,7 @@ class PgStore {
     const { rows } = await this._q(
       `SELECT id, project_id, story_id, title, description, notes,
               status, priority, assignee_id, branch, merge_state,
-              type, provenance, estimate_minutes, from_request_id, blocked_reason, created_at, updated_at
+              type, provenance, estimate_minutes, from_request_id, blocked_reason, workflow, created_at, updated_at
          FROM tasks WHERE project_id = $1 ORDER BY id`,
       [projectId]
     );
@@ -932,6 +954,16 @@ class PgStore {
     // The old Promise.all(rows.map(_hydrate)) fired N×4+1 queries through a
     // 10-connection pool — for a project with hundreds/thousands of tasks that
     // was the dominant cause of slow board loads. This is 5 queries flat.
+    return this._hydrateMany(rows);
+  }
+
+  async listWorkflowTasks() {
+    const { rows } = await this._q(
+      `SELECT id, project_id, story_id, title, description, notes,
+              status, priority, assignee_id, branch, merge_state,
+              type, provenance, estimate_minutes, from_request_id, blocked_reason, workflow, created_at, updated_at
+         FROM tasks ORDER BY id`
+    );
     return this._hydrateMany(rows);
   }
 
@@ -959,6 +991,7 @@ class PgStore {
     const attBy = groupBy(attR.rows, 'entity_id');
     return rows.map((r) => ({
       ...r,
+      workflow:    normalizeWorkflow(r.workflow),
       deps:        depsBy.get(r.id) || [],
       comments:    comBy.get(r.id)  || [],
       activity:    actBy.get(r.id)  || [],
@@ -970,7 +1003,7 @@ class PgStore {
     const { rows } = await this._q(
       `SELECT id, project_id, story_id, title, description, notes,
               status, priority, assignee_id, branch, merge_state,
-              type, provenance, estimate_minutes, from_request_id, blocked_reason, created_at, updated_at
+              type, provenance, estimate_minutes, from_request_id, blocked_reason, workflow, created_at, updated_at
          FROM tasks WHERE id = $1`,
       [id]
     );
@@ -1020,7 +1053,7 @@ class PgStore {
   static get _TASK_COLS() {
     return `id, project_id, story_id, title, description, notes,
             status, priority, assignee_id, branch, merge_state, type, provenance,
-            estimate_minutes, from_request_id, blocked_reason, created_at, updated_at`;
+            estimate_minutes, from_request_id, blocked_reason, workflow, created_at, updated_at`;
   }
 
   // Insert one task + its deps + the "created" activity row on a single client
@@ -1075,6 +1108,7 @@ class PgStore {
     );
     return {
       ...taskRes.rows[0],
+      workflow:    normalizeWorkflow(taskRes.rows[0].workflow),
       deps:        deps.slice(),
       comments:    [],
       activity:    [actRes.rows[0]],
@@ -1215,12 +1249,42 @@ class PgStore {
       `UPDATE tasks
           SET status = 'in_progress', assignee_id = $2, updated_at = now()
         WHERE id = $1 AND assignee_id IS NULL
+          AND NOT (workflow @> '{"deferred":true}'::jsonb)
+          AND NOT (COALESCE(workflow->>'question', '') <> ''
+                   AND COALESCE(workflow->>'answer', '') = '')
         RETURNING id`,
       [id, assigneeId]
     );
     if (rows.length === 0) return null;
     if (logText) await this.log('task', id, actorId, logText);
     return this.task(id);
+  }
+
+  async applyWorkflowAction(id, input, actorId, actorKind) {
+    const client = await this._pool.connect();
+    try {
+      await client.query('BEGIN');
+      const locked = await client.query('SELECT workflow FROM tasks WHERE id = $1 FOR UPDATE', [id]);
+      if (!locked.rows[0]) {
+        await client.query('ROLLBACK');
+        return null;
+      }
+      const updated = applyWorkflowAction(locked.rows[0].workflow, input, actorKind);
+      await client.query('UPDATE tasks SET workflow = $2::jsonb, updated_at = now() WHERE id = $1',
+        [id, JSON.stringify(updated)]);
+      await client.query(
+        `INSERT INTO activity (entity_type, entity_id, actor_id, text)
+         VALUES ('task', $1, $2, $3)`,
+        [id, actorId, workflowActivityText(input.action, updated)]
+      );
+      await client.query('COMMIT');
+      return this.task(id);
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
   }
 
   // Does adding edges id→dep (for each dep) create a cycle? Returns the first

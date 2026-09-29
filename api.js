@@ -28,6 +28,14 @@
     ["updatedAt",     "updated_at"],
   ];
 
+  const WORKFLOW_MAP = [
+    ["discussedRevision", "discussed_revision"],
+    ["nextStep", "next_step"],
+    ["deferReason", "defer_reason"],
+    ["returnCondition", "return_condition"],
+    ["deferredUntil", "deferred_until"],
+  ];
+
   const COMMENT_MAP = [
     ["who",  "author_id"],
     ["text", "body"],
@@ -180,6 +188,7 @@
   function fromApiTask(obj) {
     if (!obj) return obj;
     const t = applyMap(obj, TASK_MAP, "from");
+    if (t.workflow) t.workflow = applyMap(t.workflow, WORKFLOW_MAP, "from");
     if (Array.isArray(t.comments)) {
       t.comments = translateArray(t.comments, fromApiComment);
     }
@@ -459,6 +468,20 @@
     return fromApiTask(data);
   }
 
+  async function getWorkflow() {
+    var data = await request("GET", "/workflow");
+    var result = {};
+    ["work", "conversation", "deferred", "active"].forEach(function (key) {
+      result[key] = Array.isArray(data && data[key]) ? data[key].map(fromApiTask) : [];
+    });
+    return result;
+  }
+
+  async function workflowAction(id, fields) {
+    var data = await request("POST", "/tasks/" + encodeURIComponent(id) + "/workflow", fields);
+    return fromApiTask(data);
+  }
+
   async function createTask(projectId, fields) {
     // fields is camelCase; translate before sending
     var body = toApiTask(fields);
@@ -706,6 +729,8 @@
     // Tasks
     getTasks:      getTasks,
     getTask:       getTask,
+    getWorkflow:   getWorkflow,
+    workflowAction: workflowAction,
     createTask:    createTask,
     updateTask:    updateTask,
     claimTask:     claimTask,

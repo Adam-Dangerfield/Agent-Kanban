@@ -346,3 +346,32 @@ UPLOAD_DIR=/data/uploads                               # local storage dir (Dock
 S3_BUCKET=                                             # set in prod → switches storage to S3
 AWS_REGION=                                            # S3 only
 ```
+
+## Adaptacja rozmowy: `/api/workflow`
+
+`GET /api/workflow` zwraca `{work, conversation, deferred, active}` z kartami
+w formacie REST. Widoczność jest ograniczona uprawnieniami projektowymi.
+`work` obejmuje tylko nieprzypisane `todo`, bez blokady, niezakończonych zależności,
+oczekującego pytania lub odłożenia. `conversation` zawiera nieodłożone wyniki,
+których `workflow.revision > workflow.discussed_revision`.
+
+`POST /api/tasks/:id/workflow` przyjmuje `action` i bieżące `revision`:
+
+| action | Pola | Skutek |
+|---|---|---|
+| publish | kind, summary, question dla confirmation/decision, opcjonalne next_step | Nowa wersja wyniku; nie nadpisuje pytania bez odpowiedzi |
+| answer | answer | Zapis odpowiedzi człowieka i omówienia wersji; nie kończy karty |
+| discuss | — | Oznaczenie informacji jako omówionej przez człowieka |
+| defer | reason oraz until (ISO) lub condition | Jawne odłożenie; bez automatycznego powrotu |
+| resume | — | Jawny powrót do zwykłych kolejek |
+
+`kind`: `information`, `confirmation`, `decision`. `answer` i `discuss` wymagają
+rodzaju konta `human` i uprawnienia zapisu; administracyjne konto agenta nie wystarcza.
+Wynik mutacji to pełna karta. Kody: 400 błędne pola, 403 brak uprawnienia,
+409 nieaktualna wersja lub konflikt stanu. Historia zachowuje treść ustaleń.
+Istniejący `claim` odrzuca karty odłożone i pytania bez odpowiedzi.
+
+Publikacja zwiększa rewizję wyniku. Odłożenie i wznowienie nie zmieniają numeru
+publikacji; jest to ochrona zatwierdzanej treści, nie ogólny licznik każdej edycji.
+
+---

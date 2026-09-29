@@ -285,7 +285,7 @@ function ProvenanceEditor({ task, onPatch, writeOk }) {
   );
 }
 
-function DetailPanel({ task, ctx, currentUser, onClose, onPatch, onSetDeps, onComment, onOpen, onDelete, onUploadAttachment, onDeleteAttachment, canWrite }) {
+function DetailPanel({ task, ctx, currentUser, onClose, onPatch, onSetDeps, onComment, onOpen, onDelete, onUploadAttachment, onDeleteAttachment, canWrite, onWorkflowAction }) {
   if (!task) return null;
   const epic = ctx.epicOf(task);
   const story = ctx.storyOf(task);
@@ -314,6 +314,8 @@ function DetailPanel({ task, ctx, currentUser, onClose, onPatch, onSetDeps, onCo
         <div className="panel__scroll">
           <EditableText className="panel__title" value={task.title} placeholder="Ticket title"
             onCommit={writeOk ? (v) => onPatch(task.id, { title: v }, `renamed the ticket`) : undefined} />
+
+          {onWorkflowAction && <WorkflowPublish key={task.id} task={task} onAction={onWorkflowAction} canWrite={writeOk} />}
 
           <div className="panel__breadcrumb">
             <button className="crumb" onClick={() => ctx.filterEpic(epic && epic.id)}>{epic ? epic.title : "No epic"}</button>
@@ -539,6 +541,8 @@ function TicketForm({ project, defaults, ctx, onClose, onCreate }) {
   const otherProjects = window.SEED.PROJECTS.filter((p) => p.id !== project.id);
   const myTasks = ctx.allTasks.filter((tk) => ctx.epicOf(tk) && ctx.epicOf(tk).projectId === project.id);
   const [mode, setMode] = useState(defaults.mode === "request" ? "request" : "ticket");
+  const [creating, setCreating] = useState(false);
+  const [createError, setCreateError] = useState("");
   const [form, setForm] = useState({
     title: "", desc: "", notes: "",
     status: defaults.status || "backlog",
@@ -555,6 +559,14 @@ function TicketForm({ project, defaults, ctx, onClose, onCreate }) {
 
   const agentOpts = [{ value: null, label: "Unassigned" }, ...window.SEED.AGENTS.map((a) => ({ value: a.id, label: a.name, agent: a }))];
   const valid = form.title.trim().length > 1;
+
+  const submit = async () => {
+    if (!valid || creating) return;
+    setCreating(true); setCreateError("");
+    try { await onCreate({ ...form, mode }); }
+    catch (error) { setCreateError(error.message || "Could not create the card."); }
+    finally { setCreating(false); }
+  };
 
   return (
     <>
@@ -656,9 +668,10 @@ function TicketForm({ project, defaults, ctx, onClose, onCreate }) {
           </label>
         </div>
         <footer className="modal__foot">
+          {createError && <span className="workflow__error" role="alert">{createError}</span>}
           <button className="btn btn--ghost" onClick={onClose}>Cancel</button>
-          <button className="btn btn--primary" disabled={!valid} onClick={() => onCreate({ ...form, mode })}>
-            {mode === "request" ? "Send request" : "Create ticket"}
+          <button className="btn btn--primary" disabled={!valid || creating} onClick={submit}>
+            {creating ? "Creating…" : (mode === "request" ? "Send request" : "Create ticket")}
           </button>
         </footer>
       </div>

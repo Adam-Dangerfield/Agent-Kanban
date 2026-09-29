@@ -6,6 +6,9 @@
 secrets/
 **/secrets/
 
+# Prywatne dane lokalnego pilotażu i jednorazowe artefakty sesji.
+tmp/
+
 # ---- dependencies -------------------------------------------
 node_modules/
 

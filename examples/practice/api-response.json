@@ -1,0 +1,15 @@
+{
+  "synthetic": true,
+  "request": { "page": 1, "page_size": 2, "status": "active" },
+  "contract": { "maximum_items": 2, "required_status": "active", "total_counts_filtered_items": true },
+  "response": {
+    "page": 1,
+    "page_size": 2,
+    "total": 3,
+    "items": [
+      { "id": "sample-1", "status": "active" },
+      { "id": "sample-2", "status": "archived" },
+      { "id": "sample-3", "status": "active" }
+    ]
+  }
+}

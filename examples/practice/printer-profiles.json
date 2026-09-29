@@ -1,0 +1,9 @@
+{
+  "synthetic": true,
+  "material": "PLA sample",
+  "profiles": [
+    { "id": "fast", "layer_height_mm": 0.2, "estimated_minutes": 120, "material_grams": 19 },
+    { "id": "fine", "layer_height_mm": 0.12, "estimated_minutes": 180, "material_grams": 22 }
+  ],
+  "decision_needed": "Choose shorter printing time or finer layer height; do not assume a preference."
+}

@@ -82,6 +82,7 @@ CREATE TABLE IF NOT EXISTS tasks (
   title        TEXT NOT NULL,
   description  TEXT DEFAULT '',
   notes        TEXT DEFAULT '',                   -- description of the work
+  workflow     JSONB NOT NULL DEFAULT '{}'::jsonb, -- Stan rozmowy i odłożenia.
   status       task_status NOT NULL DEFAULT 'backlog',
   priority     priority    NOT NULL DEFAULT 'medium',
   assignee_id  TEXT REFERENCES agents(id) ON DELETE SET NULL,
