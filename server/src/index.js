@@ -1101,7 +1101,7 @@ app.delete('/api/tasks/:id', async (req, res) => {
     if (!await canWrite(req.actor, req.isAdmin, t.project_id)) {
       return res.status(403).json({ error: 'forbidden' });
     }
-    await store.deleteTask(req.params.id);
+    await store.deleteTask(req.params.id, req.actor);
     res.status(204).end();
   } catch (e) { console.error(e); res.status(500).json({ error: 'internal error' }); }
 });

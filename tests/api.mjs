@@ -5,17 +5,8 @@
  *
  * Run from repo root: node --test tests/api.mjs
  *
- * NOTE ON A KNOWN PRODUCT BUG:
- * PgStore.nextTaskId() generates IDs using `900 + COUNT(tasks WHERE project_id=X)`.
- * This is not safe: if tasks are deleted and then new ones created, the count can
- * yield an ID that already exists, causing a duplicate-key 500 error. This is a
- * genuine defect in server/src/store.js line 318. To avoid triggering it, this
- * suite carefully partitions task-creation tests across projects so that no project
- * suffers a count-regression (deletion of a task taking the count below the number
- * of previously-generated IDs).
- *   - 'aws'    project: used only for reads and patching (no task creation in C tests)
- *   - 'data'   project: used for task creation/deletion tests (C4, C5, C11, C14)
- *   - 'mobile' project: used as the 'to_project' for D3 accept (spawned task goes here)
+ * Identyfikatory usuniętych kart muszą pozostać zajęte. Testy M1 i M2 sprawdzają
+ * zwykłe oraz zbiorcze tworzenie po usunięciu najwyższego numeru.
  *
  * AUTH CHANGE (new):
  * Every endpoint now requires a valid token except GET /api/health,
@@ -1779,5 +1770,54 @@ describe('L. Agent token entropy', () => {
     const me = await api('GET', '/me', { token: body.token });
     assert.equal(me.status, 200, `new token should authenticate, got ${me.status}`);
     assert.equal(me.body.id, 'scout');
+  });
+});
+
+describe('M. Stable task identifiers', () => {
+  test('M1 deleting the highest card does not reuse its identifier or activity', async () => {
+    const first = await api('POST', '/projects/data/tasks', {
+      token: managerToken,
+      body: { title: `Identifier retention ${Date.now()}` },
+    });
+    assert.equal(first.status, 201);
+
+    const oldId = first.body.id;
+    const marker = `Deleted card marker ${Date.now()}`;
+    const logged = await api('PATCH', `/tasks/${oldId}`, {
+      token: managerToken,
+      body: { _log: marker },
+    });
+    assert.equal(logged.status, 200);
+
+    const removed = await api('DELETE', `/tasks/${oldId}`, { token: managerToken });
+    assert.equal(removed.status, 204);
+
+    const second = await api('POST', '/projects/data/tasks', {
+      token: managerToken,
+      body: { title: 'Card after deletion' },
+    });
+    assert.equal(second.status, 201);
+    assert.notEqual(second.body.id, oldId);
+    assert.ok(second.body.activity.every((entry) => entry.text !== marker));
+  });
+
+  test('M2 bulk creation does not reuse a deleted identifier', async () => {
+    const first = await api('POST', '/projects/mobile/tasks', {
+      token: managerToken,
+      body: { title: `Bulk identifier retention ${Date.now()}` },
+    });
+    assert.equal(first.status, 201);
+
+    const removed = await api('DELETE', `/tasks/${first.body.id}`, { token: managerToken });
+    assert.equal(removed.status, 204);
+
+    const bulk = await api('POST', '/projects/mobile/tasks/bulk', {
+      token: managerToken,
+      body: { tasks: [{ title: 'Card after deletion in bulk' }] },
+    });
+    assert.equal(bulk.status, 201);
+    assert.equal(bulk.body.errors.length, 0);
+    assert.equal(bulk.body.created.length, 1);
+    assert.notEqual(bulk.body.created[0], first.body.id);
   });
 });

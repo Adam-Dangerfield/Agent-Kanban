@@ -281,13 +281,16 @@ class MemoryStore {
 
   nextTaskId(projectId) {
     const key = this.project(projectId).key;
-    // Only count ids matching the generated `<KEY>-<digits>` pattern, so an
-    // imported/hierarchical id (e.g. `BUG-INFRA-12`) is ignored rather than
-    // mis-parsed. (Mirrors PgStore._nextTaskIdOnClient.)
+    // Historia zachowuje identyfikatory usuniętych kart; nie wolno ich użyć ponownie.
     const re = new RegExp(`^${key}-(\\d+)$`);
-    const suffixes = this.tasks
-      .filter((t) => this.projectOfTask(t) === projectId)
-      .map((t) => { const m = String(t.id).match(re); return m ? parseInt(m[1], 10) : NaN; })
+    const historicalIds = this.activity
+      .filter((entry) => entry.entity_type === 'task')
+      .map((entry) => entry.entity_id);
+    const suffixes = [
+      ...this.tasks.filter((task) => this.projectOfTask(task) === projectId).map((task) => task.id),
+      ...historicalIds,
+    ]
+      .map((id) => { const match = String(id).match(re); return match ? parseInt(match[1], 10) : NaN; })
       .filter((n) => !Number.isNaN(n));
     const max = suffixes.length ? Math.max(...suffixes) : 899;
     return `${key}-${Math.max(900, max + 1)}`;
@@ -402,7 +405,8 @@ class MemoryStore {
     }
   }
 
-  deleteTask(id) {
+  deleteTask(id, actorId) {
+    this.log('task', id, actorId, 'deleted this ticket');
     this.tasks = this.tasks.filter((t) => t.id !== id);
     return true;
   }
@@ -988,21 +992,21 @@ class PgStore {
   // pool.query and client.query share a signature.)
   async _nextTaskIdOnClient(q, projectId) {
     const projRes = await q.query(
-      `SELECT key FROM projects WHERE id = $1`, [projectId]
+      `SELECT key FROM projects WHERE id = $1 FOR UPDATE`, [projectId]
     );
     if (!projRes.rows[0]) throw new Error(`unknown project: ${projectId}`);
     const key = projRes.rows[0].key;
-    // Only consider ids that match the generated `<KEY>-<digits>` pattern. An
-    // imported/hierarchical id (e.g. `CMDB-INFRA-12`) would otherwise make
-    // `CAST(SPLIT_PART(id,'-',2) AS INTEGER)` throw and 500 the whole create.
-    // The regex filter keeps the cast operating only on the auto-numbered ids;
-    // substring captures the numeric suffix directly. (key matches ^[A-Z0-9]+$,
-    // so it carries no regex metacharacters.)
+    // Blokada projektu serializuje przydział; historia chroni usunięte numery.
     const maxRes = await q.query(
-      `SELECT COALESCE(MAX(substring(id from '^' || $2 || '-([0-9]+)$')::int), 899) AS mx
-         FROM tasks
-        WHERE project_id = $1
-          AND id ~ ('^' || $2 || '-[0-9]+$')`,
+      `SELECT COALESCE(MAX(number), 899) AS mx FROM (
+         SELECT substring(id from '^' || $2 || '-([0-9]+)$')::int AS number
+           FROM tasks
+          WHERE project_id = $1 AND id ~ ('^' || $2 || '-[0-9]+$')
+         UNION ALL
+         SELECT substring(entity_id from '^' || $2 || '-([0-9]+)$')::int AS number
+           FROM activity
+          WHERE entity_type = 'task' AND entity_id ~ ('^' || $2 || '-[0-9]+$')
+       ) used_numbers`,
       [projectId, key]
     );
     const mx = parseInt(maxRes.rows[0].mx, 10);
@@ -1099,12 +1103,16 @@ class PgStore {
   // already exists is skipped. Returns { created:[ids], skipped:[ids], errors }.
   async createTasksBulk(projectId, items, actorId) {
     const created = [], skipped = [], errors = [];
-    // Generate ids for id-less items within the batch from a single running
-    // counter (a per-item SELECT MAX would race against uncommitted siblings).
     let genKey = null, genNum = null;
     const client = await this._pool.connect();
     try {
       await client.query('BEGIN');
+      if (items.some((item) => !item.id)) {
+        const nextId = await this._nextTaskIdOnClient(client, projectId);
+        const separator = nextId.lastIndexOf('-');
+        genKey = nextId.slice(0, separator);
+        genNum = Number(nextId.slice(separator + 1));
+      }
       for (const data of items) {
         const ref = data.id || data.title || '(untitled)';
         await client.query('SAVEPOINT sp');
@@ -1115,22 +1123,6 @@ class PgStore {
           }
           let id = data.id;
           if (!id) {
-            if (genKey === null) {
-              const pj = await client.query(`SELECT key FROM projects WHERE id = $1`, [projectId]);
-              if (!pj.rows[0]) throw new Error(`unknown project: ${projectId}`);
-              genKey = pj.rows[0].key;
-              // Same robust pattern as _nextTaskIdOnClient: only the generated
-              // `<KEY>-<digits>` ids feed the cast, so a hierarchical id in the
-              // project can't 500 the batch.
-              const mx = await client.query(
-                `SELECT COALESCE(MAX(substring(id from '^' || $2 || '-([0-9]+)$')::int), 899) AS mx
-                   FROM tasks
-                  WHERE project_id = $1
-                    AND id ~ ('^' || $2 || '-[0-9]+$')`,
-                [projectId, genKey]
-              );
-              genNum = Math.max(900, parseInt(mx.rows[0].mx, 10) + 1);
-            }
             id = `${genKey}-${genNum++}`;
           }
           const task = await this._insertTaskOnClient(client, { ...data, id, project_id: projectId }, actorId);
@@ -1270,9 +1262,24 @@ class PgStore {
     } catch (_) { /* never let the unblock signal break the main update */ }
   }
 
-  async deleteTask(id) {
-    await this._q(`DELETE FROM tasks WHERE id = $1`, [id]);
-    return true;
+  async deleteTask(id, actorId) {
+    const client = await this._pool.connect();
+    try {
+      await client.query('BEGIN');
+      await client.query(`DELETE FROM tasks WHERE id = $1`, [id]);
+      await client.query(
+        `INSERT INTO activity (entity_type, entity_id, actor_id, text)
+         VALUES ('task', $1, $2, 'deleted this ticket')`,
+        [id, actorId]
+      );
+      await client.query('COMMIT');
+      return true;
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
   }
 
   // ---- comments ----
